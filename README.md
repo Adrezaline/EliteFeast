@@ -70,6 +70,8 @@ Do not upload or commit `.env`. In the Render service dashboard, add these value
 
 Render provides these to the app as environment variables, which the bot reads with `os.getenv(...)`. The local `.env` file is used only when developing on your computer, and it is excluded by `.gitignore`.
 
+The repository pins Render to Python 3.11.11 in `.python-version`. Do not override it with Python 3.14: the currently pinned Telegram dependencies do not provide compatible wheels for that version.
+
 Use a Render PostgreSQL database for `DATABASE_URL`; the default SQLite file is not persistent across Render deployments or restarts. Change Render's PostgreSQL URL prefix from `postgresql://` to `postgresql+asyncpg://` before saving it.
 
 ## WooCommerce Integration

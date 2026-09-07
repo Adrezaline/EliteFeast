@@ -72,7 +72,7 @@ Render provides these to the app as environment variables, which the bot reads w
 
 The repository pins Render to Python 3.11.11 in `.python-version`. Do not override it with Python 3.14: the currently pinned Telegram dependencies do not provide compatible wheels for that version.
 
-Use a Render PostgreSQL database for `DATABASE_URL`; the default SQLite file is not persistent across Render deployments or restarts. Change Render's PostgreSQL URL prefix from `postgresql://` to `postgresql+asyncpg://` before saving it.
+Use a Render PostgreSQL database for `DATABASE_URL`; the default SQLite file is not persistent across Render deployments or restarts. You can paste Render's internal PostgreSQL URL exactly as shown in its dashboard. The bot automatically configures it to use the async PostgreSQL driver.
 
 ## WooCommerce Integration
 

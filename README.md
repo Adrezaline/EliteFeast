@@ -57,6 +57,21 @@ DATABASE_URL=postgresql+asyncpg://user:password@host:5432/elitefeast_bot
 
 Run the bot on a VPS with `systemd`, Docker, or another process manager. Keep `.env` private.
 
+## Render Deployment
+
+Do not upload or commit `.env`. In the Render service dashboard, add these values under **Environment**:
+
+- `TELEGRAM_BOT_TOKEN`
+- `ADMIN_TELEGRAM_IDS`
+- `DATABASE_URL`
+- `WOOCOMMERCE_BASE_URL` (optional)
+- `WOOCOMMERCE_CONSUMER_KEY` (optional)
+- `WOOCOMMERCE_CONSUMER_SECRET` (optional)
+
+Render provides these to the app as environment variables, which the bot reads with `os.getenv(...)`. The local `.env` file is used only when developing on your computer, and it is excluded by `.gitignore`.
+
+Use a Render PostgreSQL database for `DATABASE_URL`; the default SQLite file is not persistent across Render deployments or restarts. Change Render's PostgreSQL URL prefix from `postgresql://` to `postgresql+asyncpg://` before saving it.
+
 ## WooCommerce Integration
 
 The bot currently uses its own database so shop owners can manage availability directly in Telegram. The `elitefeast_bot/integrations/woocommerce.py` file is a placeholder for syncing shops/products from EliteFeast.ru once WooCommerce API credentials are available.
@@ -66,4 +81,3 @@ You will need:
 - WooCommerce consumer key
 - WooCommerce consumer secret
 - Product/vendor ownership mapping
-

@@ -1,31 +1,23 @@
 from functools import lru_cache
+import os
 from typing import Optional, Set
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
 
 
-class Settings(BaseSettings):
-    telegram_bot_token: Optional[str] = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
-    admin_telegram_ids: str = Field(default="", alias="ADMIN_TELEGRAM_IDS")
-    database_url: str = Field(
-        default="sqlite+aiosqlite:///elitefeast_bot.db",
-        alias="DATABASE_URL",
-    )
-    woocommerce_base_url: str = Field(
-        default="https://elitefeast.ru",
-        alias="WOOCOMMERCE_BASE_URL",
-    )
-    woocommerce_consumer_key: Optional[str] = Field(
-        default=None,
-        alias="WOOCOMMERCE_CONSUMER_KEY",
-    )
-    woocommerce_consumer_secret: Optional[str] = Field(
-        default=None,
-        alias="WOOCOMMERCE_CONSUMER_SECRET",
-    )
+load_dotenv(override=False)
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+class Settings:
+    """Reads Render environment variables, with a local .env fallback for development."""
+
+    def __init__(self) -> None:
+        self.telegram_bot_token: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.admin_telegram_ids = os.getenv("ADMIN_TELEGRAM_IDS", "")
+        self.database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///elitefeast_bot.db")
+        self.woocommerce_base_url = os.getenv("WOOCOMMERCE_BASE_URL", "https://elitefeast.ru")
+        self.woocommerce_consumer_key: Optional[str] = os.getenv("WOOCOMMERCE_CONSUMER_KEY")
+        self.woocommerce_consumer_secret: Optional[str] = os.getenv("WOOCOMMERCE_CONSUMER_SECRET")
 
     @property
     def admin_ids(self) -> Set[int]:

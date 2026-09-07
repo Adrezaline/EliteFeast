@@ -1,6 +1,29 @@
 from typing import List
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
+
+
+def customer_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Browse shops"), KeyboardButton(text="My orders")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def client_order_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Message shop owner", callback_data=f"message:owner:{order_id}")],
+        ]
+    )
 
 
 def shops_keyboard(shops: List) -> InlineKeyboardMarkup:

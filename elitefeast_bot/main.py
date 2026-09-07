@@ -5,13 +5,15 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BotCommand, CallbackQuery, Message
 from sqlalchemy import select
 
 from elitefeast_bot.config import get_settings, require_bot_token
 from elitefeast_bot.db import SessionLocal, init_db
 from elitefeast_bot.keyboards import (
     admin_receipt_keyboard,
+    client_order_keyboard,
+    customer_menu_keyboard,
     delivery_for_keyboard,
     owner_live_keyboard,
     owner_order_keyboard,
@@ -112,17 +114,26 @@ async def start(message: Message) -> None:
         shops = await live_shops(session)
 
     if not shops:
-        await message.answer("No Elite Feast shops are live right now. Please check again soon.")
+        await message.answer(
+            "No Elite Feast shops are live right now. Please check again soon.",
+            reply_markup=customer_menu_keyboard(),
+        )
         return
 
     if any(shop.photo_file_id for shop in shops):
         await send_shop_cards(message, shops)
     else:
         await message.answer("Choose an available shop:", reply_markup=shops_keyboard(shops))
+    await message.answer("Use the buttons below whenever you need them.", reply_markup=customer_menu_keyboard())
 
 
 @dp.message(Command("shops"))
 async def show_shops(message: Message) -> None:
+    await start(message)
+
+
+@dp.message(F.text == "Browse shops")
+async def browse_shops_button(message: Message) -> None:
     await start(message)
 
 
@@ -143,9 +154,17 @@ async def show_orders(message: Message) -> None:
     lines = ["Your orders:"]
     for order in orders[:10]:
         lines.append(f"#{order.id}: {order.status.value} - {float(order.total_rub or 0):.2f} RUB")
-    lines.append("")
-    lines.append("To message a shop owner, send /message_order followed by the order number.")
-    await message.answer("\n".join(lines))
+    await message.answer("\n".join(lines), reply_markup=customer_menu_keyboard())
+    for order in orders[:10]:
+        await message.answer(
+            f"Order #{order.id}",
+            reply_markup=client_order_keyboard(order.id),
+        )
+
+
+@dp.message(F.text == "My orders")
+async def my_orders_button(message: Message) -> None:
+    await show_orders(message)
 
 
 @dp.callback_query(F.data.startswith("review:rating:"))
@@ -222,6 +241,25 @@ async def message_order(message: Message, state: FSMContext) -> None:
     await state.update_data(order_id=order_id, target="owner")
     await state.set_state(Messaging.waiting_for_message)
     await message.answer("Send the message to relay to the shop owner.")
+
+
+@dp.callback_query(F.data.startswith("message:owner:"))
+async def message_owner(callback: CallbackQuery, state: FSMContext) -> None:
+    order_id = int(callback.data.split(":")[2])
+    async with SessionLocal() as session:
+        order = await session.get(Order, order_id)
+        if not order or order.client_telegram_id != callback.from_user.id:
+            await callback.answer("This is not your order.", show_alert=True)
+            return
+        await session.refresh(order, attribute_names=["shop"])
+        if not order.shop.owner_telegram_id:
+            await callback.answer("This shop owner is not connected to Telegram yet.", show_alert=True)
+            return
+
+    await state.update_data(order_id=order_id, target="owner")
+    await state.set_state(Messaging.waiting_for_message)
+    await callback.message.answer("Send the message to relay to the shop owner.")
+    await callback.answer()
 
 
 @dp.message(Command("assign_owner"))
@@ -1125,6 +1163,13 @@ async def review_request_loop() -> None:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await init_db()
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Open Elite Feast"),
+            BotCommand(command="shops", description="Browse available shops"),
+            BotCommand(command="orders", description="View my orders"),
+        ]
+    )
     asyncio.create_task(schedule_loop())
     asyncio.create_task(review_request_loop())
     await dp.start_polling(bot)

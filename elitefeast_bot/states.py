@@ -30,6 +30,11 @@ class AdminProductPhoto(StatesGroup):
     waiting_for_photo = State()
 
 
+class AdminMenu(StatesGroup):
+    shop_name = State()
+    product_shop_id = State()
+
+
 class OwnerLiveWindow(StatesGroup):
     live_from = State()
     orders_close_at = State()

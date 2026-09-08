@@ -12,6 +12,20 @@ def customer_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Browse shops"), KeyboardButton(text="My orders")],
+            [KeyboardButton(text="My Telegram ID")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def admin_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Browse shops"), KeyboardButton(text="My orders")],
+            [KeyboardButton(text="Admin shops"), KeyboardButton(text="Shop cards")],
+            [KeyboardButton(text="Add shop"), KeyboardButton(text="Manage products")],
+            [KeyboardButton(text="My Telegram ID")],
         ],
         resize_keyboard=True,
         is_persistent=True,

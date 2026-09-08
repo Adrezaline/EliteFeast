@@ -11,6 +11,7 @@ from sqlalchemy import select
 from elitefeast_bot.config import get_settings, require_bot_token
 from elitefeast_bot.db import SessionLocal, init_db
 from elitefeast_bot.keyboards import (
+    admin_menu_keyboard,
     admin_receipt_keyboard,
     client_order_keyboard,
     customer_menu_keyboard,
@@ -33,6 +34,7 @@ from elitefeast_bot.services import (
     upsert_user,
 )
 from elitefeast_bot.states import (
+    AdminMenu,
     AdminProduct,
     AdminProductPhoto,
     AdminShopPhoto,
@@ -113,10 +115,11 @@ async def start(message: Message) -> None:
         await upsert_user(session, message.from_user)
         shops = await live_shops(session)
 
+    menu = admin_menu_keyboard() if message.from_user.id in settings.admin_ids else customer_menu_keyboard()
     if not shops:
         await message.answer(
             "No Elite Feast shops are live right now. Please check again soon.",
-            reply_markup=customer_menu_keyboard(),
+            reply_markup=menu,
         )
         return
 
@@ -124,7 +127,7 @@ async def start(message: Message) -> None:
         await send_shop_cards(message, shops)
     else:
         await message.answer("Choose an available shop:", reply_markup=shops_keyboard(shops))
-    await message.answer("Use the buttons below whenever you need them.", reply_markup=customer_menu_keyboard())
+    await message.answer("Use the buttons below whenever you need them.", reply_markup=menu)
 
 
 @dp.message(Command("shops"))
@@ -154,7 +157,8 @@ async def show_orders(message: Message) -> None:
     lines = ["Your orders:"]
     for order in orders[:10]:
         lines.append(f"#{order.id}: {order.status.value} - {float(order.total_rub or 0):.2f} RUB")
-    await message.answer("\n".join(lines), reply_markup=customer_menu_keyboard())
+    menu = admin_menu_keyboard() if message.from_user.id in settings.admin_ids else customer_menu_keyboard()
+    await message.answer("\n".join(lines), reply_markup=menu)
     for order in orders[:10]:
         await message.answer(
             f"Order #{order.id}",
@@ -165,6 +169,78 @@ async def show_orders(message: Message) -> None:
 @dp.message(F.text == "My orders")
 async def my_orders_button(message: Message) -> None:
     await show_orders(message)
+
+
+@dp.message(Command("admin"))
+async def admin_panel(message: Message) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await message.answer(
+            f"Admin access is not enabled for this account. Your Telegram ID is {message.from_user.id}."
+        )
+        return
+    await message.answer("Elite Feast admin panel", reply_markup=admin_menu_keyboard())
+
+
+@dp.message(Command("whoami"))
+@dp.message(F.text == "My Telegram ID")
+async def show_telegram_id(message: Message) -> None:
+    is_admin = message.from_user.id in settings.admin_ids
+    status = "Yes" if is_admin else "No"
+    await message.answer(
+        f"Your Telegram ID: {message.from_user.id}\nAdministrator: {status}",
+        reply_markup=admin_menu_keyboard() if is_admin else customer_menu_keyboard(),
+    )
+
+
+@dp.message(F.text == "Admin shops")
+async def admin_shops_button(message: Message) -> None:
+    await admin_shops(message)
+
+
+@dp.message(F.text == "Shop cards")
+async def admin_shop_cards_button(message: Message) -> None:
+    await admin_shop_cards(message)
+
+
+@dp.message(F.text == "Add shop")
+async def add_shop_button(message: Message, state: FSMContext) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await message.answer("Admin only.")
+        return
+    await state.set_state(AdminMenu.shop_name)
+    await message.answer("Send the new shop name.")
+
+
+@dp.message(AdminMenu.shop_name)
+async def add_shop_from_menu(message: Message, state: FSMContext) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        await message.answer("Admin only.")
+        return
+    await create_shop(message, message.text.strip())
+    await state.clear()
+
+
+@dp.message(F.text == "Manage products")
+async def manage_products_button(message: Message, state: FSMContext) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await message.answer("Admin only.")
+        return
+    await state.set_state(AdminMenu.product_shop_id)
+    await message.answer("Send the shop ID. Tap Admin shops to see all shop IDs.")
+
+
+@dp.message(AdminMenu.product_shop_id)
+async def manage_products_for_shop(message: Message, state: FSMContext) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        await message.answer("Admin only.")
+        return
+    if not (message.text or "").strip().isdigit():
+        await message.answer("Please send a shop ID number, for example 2.")
+        return
+    await state.clear()
+    await send_admin_products(message, int(message.text.strip()))
 
 
 @dp.callback_query(F.data.startswith("review:rating:"))
@@ -298,8 +374,12 @@ async def add_shop(message: Message) -> None:
 
     text = message.text or ""
     name = text[len("/add_shop") :].strip()
+    await create_shop(message, name)
+
+
+async def create_shop(message: Message, name: str) -> None:
     if not name:
-        await message.answer("Send it like this: /add_shop New Shop Name")
+        await message.answer("Please send a shop name.")
         return
 
     async with SessionLocal() as session:
@@ -376,7 +456,10 @@ async def admin_products(message: Message) -> None:
         await message.answer("Send it like this: /admin_products 2")
         return
 
-    shop_id = int(parts[1])
+    await send_admin_products(message, int(parts[1]))
+
+
+async def send_admin_products(message: Message, shop_id: int) -> None:
     async with SessionLocal() as session:
         shop = await session.get(Shop, shop_id)
         if not shop:
@@ -1168,6 +1251,8 @@ async def main() -> None:
             BotCommand(command="start", description="Open Elite Feast"),
             BotCommand(command="shops", description="Browse available shops"),
             BotCommand(command="orders", description="View my orders"),
+            BotCommand(command="admin", description="Open administrator panel"),
+            BotCommand(command="whoami", description="Show my Telegram ID"),
         ]
     )
     asyncio.create_task(schedule_loop())

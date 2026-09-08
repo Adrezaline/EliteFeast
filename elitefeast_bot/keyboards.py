@@ -98,6 +98,7 @@ def product_keyboard(products: List, shop_id: int) -> InlineKeyboardMarkup:
         ]
         for product in products
     ]
+    rows.append([InlineKeyboardButton(text="View cart", callback_data=f"cart:{shop_id}")])
     rows.append([InlineKeyboardButton(text="Checkout", callback_data=f"checkout:{shop_id}")])
     rows.append([InlineKeyboardButton(text="Back to shops", callback_data="shops")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -116,9 +117,27 @@ def single_product_keyboard(product_id: int, shop_id: int) -> InlineKeyboardMark
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Add to order", callback_data=f"add:{product_id}")],
+            [InlineKeyboardButton(text="View cart", callback_data=f"cart:{shop_id}")],
             [InlineKeyboardButton(text="Checkout", callback_data=f"checkout:{shop_id}")],
         ]
     )
+
+
+def cart_keyboard(order) -> InlineKeyboardMarkup:
+    rows = []
+    for item in order.items:
+        rows.append(
+            [
+                InlineKeyboardButton(text="-", callback_data=f"cart:decrease:{order.id}:{item.id}"),
+                InlineKeyboardButton(text=f"{item.product_name} x{item.quantity}", callback_data="cart:ignore"),
+                InlineKeyboardButton(text="Remove", callback_data=f"cart:remove:{order.id}:{item.id}"),
+            ]
+        )
+    if order.items:
+        rows.append([InlineKeyboardButton(text="Clear cart", callback_data=f"cart:clear:{order.id}")])
+        rows.append([InlineKeyboardButton(text="Checkout", callback_data=f"checkout:{order.shop_id}")])
+    rows.append([InlineKeyboardButton(text="Back to catalog", callback_data=f"shop:{order.shop_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_receipt_keyboard(order_id: int) -> InlineKeyboardMarkup:

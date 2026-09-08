@@ -14,6 +14,7 @@ from elitefeast_bot.db import SessionLocal, init_db
 from elitefeast_bot.keyboards import (
     admin_menu_keyboard,
     admin_receipt_keyboard,
+    cart_keyboard,
     client_order_keyboard,
     customer_care_menu_keyboard,
     customer_care_message_keyboard,
@@ -45,9 +46,14 @@ from elitefeast_bot.models import (
 )
 from elitefeast_bot.services import (
     add_product_to_order,
+    clear_draft_order,
+    draft_order,
+    draft_order_summary,
+    remove_draft_item,
     live_shops,
     order_summary,
     shop_products,
+    update_draft_item_quantity,
     upsert_user,
 )
 from elitefeast_bot.states import (
@@ -166,6 +172,10 @@ async def send_product_cards(message: Message, shop: Shop, products) -> None:
             )
         else:
             await message.answer(caption, reply_markup=single_product_keyboard(product.id, shop.id))
+
+
+async def send_cart(message: Message, order: Order) -> None:
+    await message.answer(draft_order_summary(order), reply_markup=cart_keyboard(order))
 
 
 @dp.message(Command("start"))
@@ -1024,7 +1034,74 @@ async def add_product(callback: CallbackQuery) -> None:
     product_id = int(callback.data.split(":")[1])
     async with SessionLocal() as session:
         order = await add_product_to_order(session, callback.from_user.id, product_id)
+        order = await draft_order(session, callback.from_user.id, order.shop_id)
     await callback.answer(f"Thank you. Added to order #{order.id}.")
+    await send_cart(callback.message, order)
+
+
+@dp.callback_query(F.data.startswith("cart:decrease:"))
+async def decrease_cart_item(callback: CallbackQuery) -> None:
+    _, _, order_id_raw, item_id_raw = callback.data.split(":")
+    async with SessionLocal() as session:
+        order = await update_draft_item_quantity(
+            session,
+            callback.from_user.id,
+            int(order_id_raw),
+            int(item_id_raw),
+            -1,
+        )
+    if not order:
+        await callback.answer("This cart is no longer available.", show_alert=True)
+        return
+    await callback.message.edit_text(draft_order_summary(order), reply_markup=cart_keyboard(order))
+    await callback.answer("Cart updated")
+
+
+@dp.callback_query(F.data.startswith("cart:remove:"))
+async def remove_cart_item(callback: CallbackQuery) -> None:
+    _, _, order_id_raw, item_id_raw = callback.data.split(":")
+    async with SessionLocal() as session:
+        order = await remove_draft_item(
+            session,
+            callback.from_user.id,
+            int(order_id_raw),
+            int(item_id_raw),
+        )
+    if not order:
+        await callback.answer("This cart is no longer available.", show_alert=True)
+        return
+    await callback.message.edit_text(draft_order_summary(order), reply_markup=cart_keyboard(order))
+    await callback.answer("Item removed")
+
+
+@dp.callback_query(F.data.startswith("cart:clear:"))
+async def clear_cart(callback: CallbackQuery) -> None:
+    order_id = int(callback.data.split(":")[2])
+    async with SessionLocal() as session:
+        order = await clear_draft_order(session, callback.from_user.id, order_id)
+    if not order:
+        await callback.answer("This cart is no longer available.", show_alert=True)
+        return
+    await callback.message.edit_text(draft_order_summary(order), reply_markup=cart_keyboard(order))
+    await callback.answer("Cart cleared")
+
+
+@dp.callback_query(F.data == "cart:ignore")
+async def cart_item_label(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("cart:"))
+async def view_cart(callback: CallbackQuery) -> None:
+    shop_id = int(callback.data.split(":")[1])
+    async with SessionLocal() as session:
+        order = await draft_order(session, callback.from_user.id, shop_id)
+    if not order:
+        await callback.message.answer("Your cart is empty. Please add a product before checking out.")
+        await callback.answer()
+        return
+    await callback.message.answer(draft_order_summary(order), reply_markup=cart_keyboard(order))
+    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("checkout:"))
@@ -1035,6 +1112,11 @@ async def checkout(callback: CallbackQuery, state: FSMContext) -> None:
         now = moscow_now()
         if not shop or not shop.is_live or (shop.orders_close_at and shop.orders_close_at <= now):
             await callback.message.answer("Sorry, this shop is no longer accepting orders right now. Please choose another available shop.")
+            await callback.answer()
+            return
+        order = await draft_order(session, callback.from_user.id, shop_id)
+        if not order or not order.items:
+            await callback.message.answer("Your cart is empty. Please add a product before checking out.")
             await callback.answer()
             return
 

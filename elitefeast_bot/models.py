@@ -33,6 +33,17 @@ class DeliveryFor(StringEnum):
     SOMEONE_ELSE = "someone_else"
 
 
+class CareMessageDirection(StringEnum):
+    CLIENT_TO_OWNER = "client_to_owner"
+    OWNER_TO_CLIENT = "owner_to_client"
+
+
+class CareMessageStatus(StringEnum):
+    PENDING = "pending"
+    FORWARDED = "forwarded"
+    CARE_REPLIED = "care_replied"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -120,6 +131,32 @@ class MessageThread(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
     sender_telegram_id: Mapped[int] = mapped_column(Integer)
     message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CustomerCareAgent(Base):
+    __tablename__ = "customer_care_agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CustomerCareMessage(Base):
+    __tablename__ = "customer_care_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    sender_telegram_id: Mapped[int] = mapped_column(Integer, index=True)
+    recipient_telegram_id: Mapped[int] = mapped_column(Integer, index=True)
+    direction: Mapped[CareMessageDirection] = mapped_column(Enum(CareMessageDirection))
+    status: Mapped[CareMessageStatus] = mapped_column(
+        Enum(CareMessageStatus), default=CareMessageStatus.PENDING, index=True
+    )
+    message: Mapped[str] = mapped_column(Text)
+    reviewed_by_telegram_id: Mapped[Optional[int]] = mapped_column(Integer)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

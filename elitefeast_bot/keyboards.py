@@ -25,10 +25,41 @@ def admin_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Browse shops"), KeyboardButton(text="My orders")],
             [KeyboardButton(text="Admin shops"), KeyboardButton(text="Shop cards")],
             [KeyboardButton(text="Add shop"), KeyboardButton(text="Manage products")],
+            [KeyboardButton(text="Customer care")],
             [KeyboardButton(text="My Telegram ID")],
         ],
         resize_keyboard=True,
         is_persistent=True,
+    )
+
+
+def customer_care_menu_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Pending care messages")],
+            [KeyboardButton(text="My Telegram ID")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def customer_care_message_keyboard(message_id: int, direction: str) -> InlineKeyboardMarkup:
+    recipient = "shop owner" if direction == "client_to_owner" else "customer"
+    reply_target = "customer" if direction == "client_to_owner" else "shop owner"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"Approve to {recipient}", callback_data=f"care:approve:{message_id}")],
+            [InlineKeyboardButton(text=f"Reply to {reply_target}", callback_data=f"care:reply:{message_id}")],
+        ]
+    )
+
+
+def owner_reply_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Reply to customer", callback_data=f"message:client:{order_id}")],
+        ]
     )
 
 

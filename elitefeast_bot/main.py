@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from typing import List
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -14,10 +15,13 @@ from elitefeast_bot.keyboards import (
     admin_menu_keyboard,
     admin_receipt_keyboard,
     client_order_keyboard,
+    customer_care_menu_keyboard,
+    customer_care_message_keyboard,
     customer_menu_keyboard,
     delivery_for_keyboard,
     owner_live_keyboard,
     owner_order_keyboard,
+    owner_reply_keyboard,
     owner_weekly_prompt_keyboard,
     product_keyboard,
     review_rating_keyboard,
@@ -25,7 +29,20 @@ from elitefeast_bot.keyboards import (
     single_product_keyboard,
     single_shop_keyboard,
 )
-from elitefeast_bot.models import DeliveryFor, MessageThread, Order, OrderItem, OrderStatus, Product, Review, Shop
+from elitefeast_bot.models import (
+    CareMessageDirection,
+    CareMessageStatus,
+    CustomerCareAgent,
+    CustomerCareMessage,
+    DeliveryFor,
+    MessageThread,
+    Order,
+    OrderItem,
+    OrderStatus,
+    Product,
+    Review,
+    Shop,
+)
 from elitefeast_bot.services import (
     add_product_to_order,
     live_shops,
@@ -39,6 +56,7 @@ from elitefeast_bot.states import (
     AdminProductPhoto,
     AdminShopPhoto,
     Checkout,
+    CustomerCare,
     Messaging,
     OwnerLiveWindow,
     ReviewFlow,
@@ -75,8 +93,49 @@ def format_datetime(value) -> str:
     return value.strftime("%Y-%m-%d %H:%M")
 
 
+async def active_customer_care_ids(session) -> List[int]:
+    result = await session.execute(
+        select(CustomerCareAgent.telegram_id).where(CustomerCareAgent.is_active.is_(True))
+    )
+    return list(result.scalars())
+
+
+async def is_customer_care_agent(session, telegram_id: int) -> bool:
+    result = await session.execute(
+        select(CustomerCareAgent.id).where(
+            CustomerCareAgent.telegram_id == telegram_id,
+            CustomerCareAgent.is_active.is_(True),
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+def customer_care_message_text(care_message: CustomerCareMessage) -> str:
+    sender = "Customer" if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER else "Shop owner"
+    recipient = "shop owner" if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER else "customer"
+    return (
+        f"Customer-care approval needed\n"
+        f"Order #{care_message.order_id}\n"
+        f"From: {sender}\n"
+        f"Send to: {recipient}\n\n"
+        f"{care_message.message}"
+    )
+
+
+async def notify_customer_care_agents(care_message: CustomerCareMessage, agent_ids) -> None:
+    for agent_id in agent_ids:
+        try:
+            await bot.send_message(
+                agent_id,
+                customer_care_message_text(care_message),
+                reply_markup=customer_care_message_keyboard(care_message.id, care_message.direction.value),
+            )
+        except Exception:
+            logging.exception("Could not notify customer-care agent %s", agent_id)
+
+
 async def send_shop_cards(message: Message, shops) -> None:
-    await message.answer("Choose an available shop:")
+    await message.answer("Please choose an available shop:")
     for shop in shops:
         caption = shop.name
         if shop.delivery_note:
@@ -92,7 +151,7 @@ async def send_shop_cards(message: Message, shops) -> None:
 
 
 async def send_product_cards(message: Message, shop: Shop, products) -> None:
-    await message.answer(f"{shop.name}\nSelect products to add to your order:")
+    await message.answer(f"{shop.name}\nPlease select the products you would like to add to your order:")
     for product in products:
         caption = f"{product.name}\n{float(product.price_rub):.2f} RUB"
         if product.description:
@@ -114,8 +173,14 @@ async def start(message: Message) -> None:
     async with SessionLocal() as session:
         await upsert_user(session, message.from_user)
         shops = await live_shops(session)
+        is_care_agent = await is_customer_care_agent(session, message.from_user.id)
 
-    menu = admin_menu_keyboard() if message.from_user.id in settings.admin_ids else customer_menu_keyboard()
+    if message.from_user.id in settings.admin_ids:
+        menu = admin_menu_keyboard()
+    elif is_care_agent:
+        menu = customer_care_menu_keyboard()
+    else:
+        menu = customer_menu_keyboard()
     if not shops:
         await message.answer(
             "No Elite Feast shops are live right now. Please check again soon.",
@@ -126,8 +191,8 @@ async def start(message: Message) -> None:
     if any(shop.photo_file_id for shop in shops):
         await send_shop_cards(message, shops)
     else:
-        await message.answer("Choose an available shop:", reply_markup=shops_keyboard(shops))
-    await message.answer("Use the buttons below whenever you need them.", reply_markup=menu)
+        await message.answer("Please choose an available shop:", reply_markup=shops_keyboard(shops))
+    await message.answer("Thank you. Please use the buttons below whenever you need them.", reply_markup=menu)
 
 
 @dp.message(Command("shops"))
@@ -151,13 +216,20 @@ async def show_orders(message: Message) -> None:
         orders = list(result.scalars())
 
     if not orders:
-        await message.answer("You do not have any orders yet.")
+        await message.answer("You do not have any orders yet. Thank you for visiting Elite Feast.")
         return
 
-    lines = ["Your orders:"]
+    lines = ["Thank you. Here are your orders:"]
     for order in orders[:10]:
         lines.append(f"#{order.id}: {order.status.value} - {float(order.total_rub or 0):.2f} RUB")
-    menu = admin_menu_keyboard() if message.from_user.id in settings.admin_ids else customer_menu_keyboard()
+    async with SessionLocal() as session:
+        is_care_agent = await is_customer_care_agent(session, message.from_user.id)
+    if message.from_user.id in settings.admin_ids:
+        menu = admin_menu_keyboard()
+    elif is_care_agent:
+        menu = customer_care_menu_keyboard()
+    else:
+        menu = customer_menu_keyboard()
     await message.answer("\n".join(lines), reply_markup=menu)
     for order in orders[:10]:
         await message.answer(
@@ -185,10 +257,18 @@ async def admin_panel(message: Message) -> None:
 @dp.message(F.text == "My Telegram ID")
 async def show_telegram_id(message: Message) -> None:
     is_admin = message.from_user.id in settings.admin_ids
+    async with SessionLocal() as session:
+        is_care_agent = await is_customer_care_agent(session, message.from_user.id)
     status = "Yes" if is_admin else "No"
+    if is_admin:
+        menu = admin_menu_keyboard()
+    elif is_care_agent:
+        menu = customer_care_menu_keyboard()
+    else:
+        menu = customer_menu_keyboard()
     await message.answer(
         f"Your Telegram ID: {message.from_user.id}\nAdministrator: {status}",
-        reply_markup=admin_menu_keyboard() if is_admin else customer_menu_keyboard(),
+        reply_markup=menu,
     )
 
 
@@ -243,6 +323,178 @@ async def manage_products_for_shop(message: Message, state: FSMContext) -> None:
     await send_admin_products(message, int(message.text.strip()))
 
 
+@dp.message(F.text == "Customer care")
+async def customer_care_management(message: Message, state: FSMContext) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await message.answer("Admin only.")
+        return
+    await state.set_state(AdminMenu.customer_care_telegram_id)
+    await message.answer("Please send the Telegram ID of the customer-care agent.")
+
+
+@dp.message(AdminMenu.customer_care_telegram_id)
+async def assign_customer_care_from_menu(message: Message, state: FSMContext) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        await message.answer("Admin only.")
+        return
+    if not (message.text or "").strip().isdigit():
+        await message.answer("Please send a Telegram ID number, for example 123456789.")
+        return
+    await assign_customer_care_agent(message, int(message.text.strip()))
+    await state.clear()
+
+
+@dp.message(Command("assign_care"))
+async def assign_customer_care_command(message: Message) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await message.answer("Admin only.")
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Please send it like this: /assign_care 123456789")
+        return
+    await assign_customer_care_agent(message, int(parts[1]))
+
+
+async def assign_customer_care_agent(message: Message, telegram_id: int) -> None:
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(CustomerCareAgent).where(CustomerCareAgent.telegram_id == telegram_id)
+        )
+        agent = result.scalar_one_or_none()
+        if agent:
+            agent.is_active = True
+        else:
+            agent = CustomerCareAgent(telegram_id=telegram_id)
+            session.add(agent)
+        await session.commit()
+
+    await message.answer(f"Customer care is now assigned to Telegram ID {telegram_id}.")
+    try:
+        await bot.send_message(
+            telegram_id,
+            "You have been assigned as an Elite Feast customer-care agent. Please use the buttons below to review messages.",
+            reply_markup=customer_care_menu_keyboard(),
+        )
+    except Exception:
+        await message.answer("Please ask the customer-care agent to open this bot with /start, then they can use /care.")
+
+
+@dp.message(Command("care"))
+async def customer_care_panel(message: Message) -> None:
+    async with SessionLocal() as session:
+        is_care_agent = await is_customer_care_agent(session, message.from_user.id)
+    if not is_care_agent:
+        await message.answer("Customer-care access is not enabled for this account.")
+        return
+    await message.answer("Elite Feast customer-care panel", reply_markup=customer_care_menu_keyboard())
+
+
+@dp.message(F.text == "Pending care messages")
+async def pending_customer_care_messages(message: Message) -> None:
+    async with SessionLocal() as session:
+        is_care_agent = await is_customer_care_agent(session, message.from_user.id)
+        if not is_care_agent:
+            await message.answer("Customer-care access is not enabled for this account.")
+            return
+        result = await session.execute(
+            select(CustomerCareMessage)
+            .where(CustomerCareMessage.status == CareMessageStatus.PENDING)
+            .order_by(CustomerCareMessage.created_at)
+        )
+        messages = list(result.scalars())
+
+    if not messages:
+        await message.answer("There are no messages waiting for review.")
+        return
+    for care_message in messages:
+        await message.answer(
+            customer_care_message_text(care_message),
+            reply_markup=customer_care_message_keyboard(care_message.id, care_message.direction.value),
+        )
+
+
+@dp.callback_query(F.data.startswith("care:approve:"))
+async def approve_customer_care_message(callback: CallbackQuery) -> None:
+    care_message_id = int(callback.data.split(":")[2])
+    async with SessionLocal() as session:
+        if not await is_customer_care_agent(session, callback.from_user.id):
+            await callback.answer("Customer-care access only.", show_alert=True)
+            return
+        care_message = await session.get(CustomerCareMessage, care_message_id)
+        if not care_message or care_message.status != CareMessageStatus.PENDING:
+            await callback.answer("This message has already been reviewed.", show_alert=True)
+            return
+        care_message.status = CareMessageStatus.FORWARDED
+        care_message.reviewed_by_telegram_id = callback.from_user.id
+        care_message.reviewed_at = datetime.utcnow()
+        await session.commit()
+
+    if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER:
+        text = f"Customer message about order #{care_message.order_id}:\n\n{care_message.message}"
+        reply_markup = owner_reply_keyboard(care_message.order_id)
+    else:
+        text = f"Shop owner response about order #{care_message.order_id}:\n\n{care_message.message}"
+        reply_markup = None
+    await bot.send_message(care_message.recipient_telegram_id, text, reply_markup=reply_markup)
+    await callback.message.answer(f"Message for order #{care_message.order_id} approved and sent.")
+    await callback.answer("Approved")
+
+
+@dp.callback_query(F.data.startswith("care:reply:"))
+async def reply_to_customer_care_message(callback: CallbackQuery, state: FSMContext) -> None:
+    care_message_id = int(callback.data.split(":")[2])
+    async with SessionLocal() as session:
+        if not await is_customer_care_agent(session, callback.from_user.id):
+            await callback.answer("Customer-care access only.", show_alert=True)
+            return
+        care_message = await session.get(CustomerCareMessage, care_message_id)
+        if not care_message or care_message.status != CareMessageStatus.PENDING:
+            await callback.answer("This message has already been reviewed.", show_alert=True)
+            return
+
+    await state.update_data(care_message_id=care_message_id)
+    await state.set_state(CustomerCare.reply)
+    recipient = "customer" if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER else "shop owner"
+    await callback.message.answer(f"Please send the reply you would like to send to the {recipient}.")
+    await callback.answer()
+
+
+@dp.message(CustomerCare.reply, F.text)
+async def send_customer_care_reply(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    async with SessionLocal() as session:
+        if not await is_customer_care_agent(session, message.from_user.id):
+            await state.clear()
+            await message.answer("Customer-care access only.")
+            return
+        care_message = await session.get(CustomerCareMessage, data["care_message_id"])
+        if not care_message or care_message.status != CareMessageStatus.PENDING:
+            await state.clear()
+            await message.answer("This message has already been reviewed.")
+            return
+        care_message.status = CareMessageStatus.CARE_REPLIED
+        care_message.reviewed_by_telegram_id = message.from_user.id
+        care_message.reviewed_at = datetime.utcnow()
+        session.add(
+            MessageThread(
+                order_id=care_message.order_id,
+                sender_telegram_id=message.from_user.id,
+                message=message.text,
+            )
+        )
+        await session.commit()
+
+    recipient = "customer" if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER else "shop owner"
+    await bot.send_message(
+        care_message.sender_telegram_id,
+        f"Customer care message about order #{care_message.order_id}:\n\n{message.text}",
+    )
+    await state.clear()
+    await message.answer(f"Your reply has been sent to the {recipient}.")
+
+
 @dp.callback_query(F.data.startswith("review:rating:"))
 async def review_rating(callback: CallbackQuery, state: FSMContext) -> None:
     _, _, order_id_raw, rating_raw = callback.data.split(":")
@@ -251,12 +503,12 @@ async def review_rating(callback: CallbackQuery, state: FSMContext) -> None:
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != callback.from_user.id:
-            await callback.answer("This is not your order.", show_alert=True)
+            await callback.answer("Sorry, this is not your order.", show_alert=True)
             return
 
     await state.update_data(order_id=order_id, rating=rating)
     await state.set_state(ReviewFlow.comment)
-    await callback.message.answer("Thank you. Send a short comment about the product, or send - to skip.")
+    await callback.message.answer("Thank you. Please send a short comment about the product, or send - to skip.")
     await callback.answer()
 
 
@@ -266,7 +518,7 @@ async def review_skip(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != callback.from_user.id:
-            await callback.answer("This is not your order.", show_alert=True)
+            await callback.answer("Sorry, this is not your order.", show_alert=True)
             return
         session.add(Review(order_id=order.id, client_telegram_id=callback.from_user.id))
         await session.commit()
@@ -300,23 +552,23 @@ async def review_comment(message: Message, state: FSMContext) -> None:
 async def message_order(message: Message, state: FSMContext) -> None:
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer("Send it like this: /message_order 15")
+        await message.answer("Please send the order number like this: /message_order 15")
         return
 
     order_id = int(parts[1])
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != message.from_user.id:
-            await message.answer("I could not find that order for your Telegram account.")
+            await message.answer("Sorry, I could not find that order for your Telegram account. Please check the order number and try again.")
             return
         await session.refresh(order, attribute_names=["shop"])
         if not order.shop.owner_telegram_id:
-            await message.answer("This shop owner is not connected to Telegram yet.")
+            await message.answer("Sorry, this shop owner is not connected to Telegram yet. Please try again a little later.")
             return
 
     await state.update_data(order_id=order_id, target="owner")
     await state.set_state(Messaging.waiting_for_message)
-    await message.answer("Send the message to relay to the shop owner.")
+    await message.answer("Please send the message you would like us to relay to the shop owner.")
 
 
 @dp.callback_query(F.data.startswith("message:owner:"))
@@ -325,7 +577,7 @@ async def message_owner(callback: CallbackQuery, state: FSMContext) -> None:
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != callback.from_user.id:
-            await callback.answer("This is not your order.", show_alert=True)
+            await callback.answer("Sorry, this is not your order.", show_alert=True)
             return
         await session.refresh(order, attribute_names=["shop"])
         if not order.shop.owner_telegram_id:
@@ -334,7 +586,7 @@ async def message_owner(callback: CallbackQuery, state: FSMContext) -> None:
 
     await state.update_data(order_id=order_id, target="owner")
     await state.set_state(Messaging.waiting_for_message)
-    await callback.message.answer("Send the message to relay to the shop owner.")
+    await callback.message.answer("Please send the message you would like us to relay to the shop owner.")
     await callback.answer()
 
 
@@ -739,7 +991,7 @@ async def admin_shop_cards(message: Message) -> None:
 async def shops_callback(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         shops = await live_shops(session)
-    await callback.message.edit_text("Choose an available shop:", reply_markup=shops_keyboard(shops))
+    await callback.message.edit_text("Please choose an available shop:", reply_markup=shops_keyboard(shops))
     await callback.answer()
 
 
@@ -752,16 +1004,16 @@ async def show_catalog(callback: CallbackQuery, state: FSMContext) -> None:
         products = await shop_products(session, shop_id)
 
     if not products:
-        await callback.message.edit_text(f"{shop.name} has no available products right now.")
+        await callback.message.edit_text(f"Sorry, {shop.name} has no available products right now. Please check again soon.")
         await callback.answer()
         return
 
     if any(product.photo_file_id for product in products):
-        await callback.message.answer("Opening catalog...")
+        await callback.message.answer("Thank you. Please have a look through the catalog.")
         await send_product_cards(callback.message, shop, products)
     else:
         await callback.message.edit_text(
-            f"{shop.name}\n\nSelect products to add to your order:",
+            f"{shop.name}\n\nPlease select the products you would like to add to your order:",
             reply_markup=product_keyboard(products, shop_id),
         )
     await callback.answer()
@@ -772,7 +1024,7 @@ async def add_product(callback: CallbackQuery) -> None:
     product_id = int(callback.data.split(":")[1])
     async with SessionLocal() as session:
         order = await add_product_to_order(session, callback.from_user.id, product_id)
-    await callback.answer(f"Added to order #{order.id}")
+    await callback.answer(f"Thank you. Added to order #{order.id}.")
 
 
 @dp.callback_query(F.data.startswith("checkout:"))
@@ -782,13 +1034,13 @@ async def checkout(callback: CallbackQuery, state: FSMContext) -> None:
         shop = await session.get(Shop, shop_id)
         now = moscow_now()
         if not shop or not shop.is_live or (shop.orders_close_at and shop.orders_close_at <= now):
-            await callback.message.answer("This shop is no longer accepting orders right now.")
+            await callback.message.answer("Sorry, this shop is no longer accepting orders right now. Please choose another available shop.")
             await callback.answer()
             return
 
     await state.update_data(shop_id=shop_id)
     await state.set_state(Checkout.city)
-    await callback.message.answer("Which city is this order for?")
+    await callback.message.answer("Please tell us which city this order is for.")
     await callback.answer()
 
 
@@ -816,22 +1068,22 @@ async def checkout_city(message: Message, state: FSMContext) -> None:
     if unavailable_names:
         await state.clear()
         await message.answer(
-            "Some items in your cart are not available for that city:\n"
+            "Sorry, some items in your cart are not available for that city:\n"
             + "\n".join(f"- {name}" for name in unavailable_names)
-            + "\n\nPlease start a new order with /shops."
+            + "\n\nPlease start a new order with /shops. Thank you for your understanding."
         )
         return
 
     await state.update_data(city=city)
     await state.set_state(Checkout.delivery_address)
-    await message.answer("Send the delivery address.")
+    await message.answer("Please send the delivery address.")
 
 
 @dp.message(Checkout.delivery_address)
 async def checkout_address(message: Message, state: FSMContext) -> None:
     await state.update_data(delivery_address=message.text.strip())
     await state.set_state(Checkout.delivery_for)
-    await message.answer("Who is this delivery for?", reply_markup=delivery_for_keyboard())
+    await message.answer("Please let us know who this delivery is for.", reply_markup=delivery_for_keyboard())
 
 
 @dp.callback_query(Checkout.delivery_for, F.data.startswith("delivery_for:"))
@@ -840,10 +1092,10 @@ async def checkout_delivery_for(callback: CallbackQuery, state: FSMContext) -> N
     await state.update_data(delivery_for=delivery_for)
     if delivery_for == DeliveryFor.SOMEONE_ELSE.value:
         await state.set_state(Checkout.recipient_name)
-        await callback.message.answer("Send the recipient's name.")
+        await callback.message.answer("Please send the recipient's name.")
     else:
         await state.set_state(Checkout.receipt)
-        await callback.message.answer("Upload a screenshot/photo of the payment receipt.")
+        await callback.message.answer("Please upload a screenshot or photo of the payment receipt. Thank you.")
     await callback.answer()
 
 
@@ -851,14 +1103,14 @@ async def checkout_delivery_for(callback: CallbackQuery, state: FSMContext) -> N
 async def checkout_recipient_name(message: Message, state: FSMContext) -> None:
     await state.update_data(recipient_name=message.text.strip())
     await state.set_state(Checkout.recipient_phone)
-    await message.answer("Send the recipient's phone number.")
+    await message.answer("Please send the recipient's phone number.")
 
 
 @dp.message(Checkout.recipient_phone)
 async def checkout_recipient_phone(message: Message, state: FSMContext) -> None:
     await state.update_data(recipient_phone=message.text.strip())
     await state.set_state(Checkout.receipt)
-    await message.answer("Upload a screenshot/photo of the payment receipt.")
+    await message.answer("Please upload a screenshot or photo of the payment receipt. Thank you.")
 
 
 @dp.message(Checkout.receipt, F.photo)
@@ -886,7 +1138,7 @@ async def checkout_receipt(message: Message, state: FSMContext) -> None:
         await session.commit()
         summary = await order_summary(session, order)
 
-    await message.answer("Receipt received. Your order is pending confirmation.")
+    await message.answer("Thank you. We have received your receipt, and your order is now awaiting confirmation.")
     for admin_id in settings.admin_ids:
         await bot.send_photo(
             admin_id,
@@ -912,7 +1164,7 @@ async def admin_action(callback: CallbackQuery) -> None:
             order.status = OrderStatus.PROCESSING
             await session.commit()
             summary = await order_summary(session, order)
-            await bot.send_message(order.client_telegram_id, f"Order #{order.id} approved and processing.")
+            await bot.send_message(order.client_telegram_id, f"Thank you. Your payment for order #{order.id} has been confirmed, and the order is now being processed.")
             if order.shop.owner_telegram_id:
                 await bot.send_message(
                     order.shop.owner_telegram_id,
@@ -923,7 +1175,7 @@ async def admin_action(callback: CallbackQuery) -> None:
         elif action == "reject":
             order.status = OrderStatus.REJECTED
             await session.commit()
-            await bot.send_message(order.client_telegram_id, f"Order #{order.id} was rejected after receipt review.")
+            await bot.send_message(order.client_telegram_id, f"Sorry, we could not confirm the receipt for order #{order.id}. Please contact us if you need any assistance.")
             await callback.message.answer(f"Order #{order.id} rejected.")
     await callback.answer()
 
@@ -1100,7 +1352,7 @@ async def owner_order_action(callback: CallbackQuery) -> None:
             order.status = OrderStatus.DELIVERED
             order.delivered_at = datetime.utcnow()
         await session.commit()
-    await bot.send_message(order.client_telegram_id, f"Order #{order.id} status: {order.status.value}.")
+    await bot.send_message(order.client_telegram_id, f"Thank you. The status of order #{order.id} is now: {order.status.value}.")
     for admin_id in settings.admin_ids:
         await bot.send_message(
             admin_id,
@@ -1146,8 +1398,15 @@ async def relay_message(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     order_id = data["order_id"]
     requested_target = data.get("target")
+    target_ids = []
+    care_message = None
+    care_agent_ids = []
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
+        if not order:
+            await state.clear()
+            await message.answer("Sorry, this order is no longer available.")
+            return
         await session.refresh(order, attribute_names=["shop"])
         thread_message = MessageThread(
             order_id=order.id,
@@ -1155,26 +1414,46 @@ async def relay_message(message: Message, state: FSMContext) -> None:
             message=message.text,
         )
         session.add(thread_message)
+
+        if requested_target == "admin":
+            target_ids = list(settings.admin_ids)
+        elif requested_target == "client" and message.from_user.id == order.shop.owner_telegram_id:
+            care_message = CustomerCareMessage(
+                order_id=order.id,
+                sender_telegram_id=message.from_user.id,
+                recipient_telegram_id=order.client_telegram_id,
+                direction=CareMessageDirection.OWNER_TO_CLIENT,
+                message=message.text,
+            )
+            session.add(care_message)
+            care_agent_ids = await active_customer_care_ids(session)
+        elif message.from_user.id == order.client_telegram_id and order.shop.owner_telegram_id:
+            care_message = CustomerCareMessage(
+                order_id=order.id,
+                sender_telegram_id=message.from_user.id,
+                recipient_telegram_id=order.shop.owner_telegram_id,
+                direction=CareMessageDirection.CLIENT_TO_OWNER,
+                message=message.text,
+            )
+            session.add(care_message)
+            care_agent_ids = await active_customer_care_ids(session)
+        elif requested_target == "client":
+            target_ids = [order.client_telegram_id]
+
         await session.commit()
 
-    target_ids = []
-    if requested_target == "admin":
-        target_ids = list(settings.admin_ids)
-    elif requested_target == "client":
-        target_ids = [order.client_telegram_id]
-    elif message.from_user.id == order.client_telegram_id:
-        target_id = order.shop.owner_telegram_id
-        if target_id:
-            target_ids = [target_id]
-    else:
-        target_ids = [order.client_telegram_id]
-
-    if target_ids:
+    if care_message:
+        await notify_customer_care_agents(care_message, care_agent_ids)
+        if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER:
+            await message.answer("Thank you. Your message is now with customer care for review before it is shared with the shop owner.")
+        else:
+            await message.answer("Your message is now with customer care for review before it is shared with the customer.")
+    elif target_ids:
         for target_id in target_ids:
             await bot.send_message(target_id, f"Message about order #{order.id}:\n\n{message.text}")
-        await message.answer("Message sent.")
+        await message.answer("Thank you. Your message has been sent.")
     else:
-        await message.answer("No recipient is assigned yet.")
+        await message.answer("Sorry, no recipient is assigned yet. Please try again a little later.")
     await state.clear()
 
 
@@ -1233,7 +1512,7 @@ async def review_request_loop() -> None:
                 for order in orders:
                     await bot.send_message(
                         order.client_telegram_id,
-                        f"How was your order #{order.id}? Please rate the product.",
+                        f"Thank you for your order. How was order #{order.id}? Please rate the product when you have a moment.",
                         reply_markup=review_rating_keyboard(order.id),
                     )
                     order.review_requested_at = datetime.utcnow()
@@ -1252,6 +1531,7 @@ async def main() -> None:
             BotCommand(command="shops", description="Browse available shops"),
             BotCommand(command="orders", description="View my orders"),
             BotCommand(command="admin", description="Open administrator panel"),
+            BotCommand(command="care", description="Open customer-care panel"),
             BotCommand(command="whoami", description="Show my Telegram ID"),
         ]
     )

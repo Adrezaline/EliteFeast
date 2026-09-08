@@ -33,6 +33,11 @@ class AdminProductPhoto(StatesGroup):
 class AdminMenu(StatesGroup):
     shop_name = State()
     product_shop_id = State()
+    customer_care_telegram_id = State()
+
+
+class CustomerCare(StatesGroup):
+    reply = State()
 
 
 class OwnerLiveWindow(StatesGroup):

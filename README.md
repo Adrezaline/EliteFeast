@@ -27,6 +27,7 @@ Telegram bot for EliteFeast.ru marketplace orders, shop availability, receipt ap
 3. Fill in:
    - `TELEGRAM_BOT_TOKEN`
    - `ADMIN_TELEGRAM_IDS`
+   - `PAYMENT_CARD_NUMBER`
 4. Install dependencies:
 
 ```powershell
@@ -63,12 +64,15 @@ Do not upload or commit `.env`. In the Render service dashboard, add these value
 
 - `TELEGRAM_BOT_TOKEN`
 - `ADMIN_TELEGRAM_IDS`
+- `PAYMENT_CARD_NUMBER`
 - `DATABASE_URL`
 - `WOOCOMMERCE_BASE_URL` (optional)
 - `WOOCOMMERCE_CONSUMER_KEY` (optional)
 - `WOOCOMMERCE_CONSUMER_SECRET` (optional)
 
 Render provides these to the app as environment variables, which the bot reads with `os.getenv(...)`. The local `.env` file is used only when developing on your computer, and it is excluded by `.gitignore`.
+
+`PAYMENT_CARD_NUMBER` is shown to customers immediately before they upload a payment receipt. Enter only the card number; never store a card PIN, CVV, or other bank-security details in Render or in the repository.
 
 The repository pins Render to Python 3.11.11 in `.python-version`. Do not override it with Python 3.14: the currently pinned Telegram dependencies do not provide compatible wheels for that version.
 

@@ -99,6 +99,21 @@ def format_datetime(value) -> str:
     return value.strftime("%Y-%m-%d %H:%M")
 
 
+async def request_payment_receipt(message: Message, state: FSMContext) -> None:
+    if not settings.payment_card_number:
+        await state.clear()
+        await message.answer(
+            "Sorry, payment details are not available at the moment. Please contact Elite Feast before making payment."
+        )
+        return
+    await state.set_state(Checkout.receipt)
+    await message.answer(
+        "Please make your payment to this bank card:\n"
+        f"{settings.payment_card_number}\n\n"
+        "After making payment, please upload a screenshot or photo of the payment receipt. Thank you."
+    )
+
+
 async def active_customer_care_ids(session) -> List[int]:
     result = await session.execute(
         select(CustomerCareAgent.telegram_id).where(CustomerCareAgent.is_active.is_(True))
@@ -1176,8 +1191,7 @@ async def checkout_delivery_for(callback: CallbackQuery, state: FSMContext) -> N
         await state.set_state(Checkout.recipient_name)
         await callback.message.answer("Please send the recipient's name.")
     else:
-        await state.set_state(Checkout.receipt)
-        await callback.message.answer("Please upload a screenshot or photo of the payment receipt. Thank you.")
+        await request_payment_receipt(callback.message, state)
     await callback.answer()
 
 
@@ -1191,8 +1205,7 @@ async def checkout_recipient_name(message: Message, state: FSMContext) -> None:
 @dp.message(Checkout.recipient_phone)
 async def checkout_recipient_phone(message: Message, state: FSMContext) -> None:
     await state.update_data(recipient_phone=message.text.strip())
-    await state.set_state(Checkout.receipt)
-    await message.answer("Please upload a screenshot or photo of the payment receipt. Thank you.")
+    await request_payment_receipt(message, state)
 
 
 @dp.message(Checkout.receipt, F.photo)

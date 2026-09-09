@@ -23,6 +23,7 @@ class Settings:
     def __init__(self) -> None:
         self.telegram_bot_token: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
         self.admin_telegram_ids = os.getenv("ADMIN_TELEGRAM_IDS", "")
+        self.payment_card_number: Optional[str] = os.getenv("PAYMENT_CARD_NUMBER")
         self.database_url = async_database_url(
             os.getenv("DATABASE_URL", "sqlite+aiosqlite:///elitefeast_bot.db")
         )

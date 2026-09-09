@@ -3,7 +3,8 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from elitefeast_bot.models import Order, OrderItem, OrderStatus, Product, Shop, User, UserRole
+from elitefeast_bot.i18n import LANGUAGES, t
+from elitefeast_bot.models import CustomerLanguagePreference, Order, OrderItem, OrderStatus, Product, Shop, User, UserRole
 
 
 async def upsert_user(session: AsyncSession, telegram_user, role: UserRole = UserRole.CLIENT) -> User:
@@ -22,6 +23,28 @@ async def upsert_user(session: AsyncSession, telegram_user, role: UserRole = Use
         user.username = telegram_user.username
     await session.commit()
     return user
+
+
+async def customer_language(session: AsyncSession, telegram_id: int) -> str:
+    result = await session.execute(
+        select(CustomerLanguagePreference).where(CustomerLanguagePreference.telegram_id == telegram_id)
+    )
+    preference = result.scalar_one_or_none()
+    return preference.language if preference and preference.language in LANGUAGES else "en"
+
+
+async def set_customer_language(session: AsyncSession, telegram_id: int, language: str) -> str:
+    selected = language if language in LANGUAGES else "en"
+    result = await session.execute(
+        select(CustomerLanguagePreference).where(CustomerLanguagePreference.telegram_id == telegram_id)
+    )
+    preference = result.scalar_one_or_none()
+    if preference:
+        preference.language = selected
+    else:
+        session.add(CustomerLanguagePreference(telegram_id=telegram_id, language=selected))
+    await session.commit()
+    return selected
 
 
 async def live_shops(session: AsyncSession) -> List[Shop]:
@@ -169,14 +192,14 @@ async def clear_draft_order(session: AsyncSession, client_telegram_id: int, orde
     return order
 
 
-def draft_order_summary(order: Order) -> str:
-    lines = [f"Your cart for {order.shop.name}:"]
+def draft_order_summary(order: Order, language: str = "en") -> str:
+    lines = [t(language, "cart_for", shop=order.shop.name)]
     if not order.items:
-        return "Your cart is empty. Please browse the catalog to add products."
+        return t(language, "cart_empty_browse")
     for item in order.items:
         line_total = float(item.unit_price_rub) * item.quantity
         lines.append(f"- {item.product_name} x{item.quantity}: {line_total:.2f} RUB")
-    lines.extend(["", f"Total: {float(order.total_rub or 0):.2f} RUB"])
+    lines.extend(["", t(language, "total", total=float(order.total_rub or 0))])
     return "\n".join(lines)
 
 

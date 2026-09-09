@@ -55,6 +55,15 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class CustomerLanguagePreference(Base):
+    __tablename__ = "customer_language_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    language: Mapped[str] = mapped_column(String(8), default="en")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Shop(Base):
     __tablename__ = "shops"
 

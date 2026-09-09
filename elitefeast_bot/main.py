@@ -20,6 +20,7 @@ from elitefeast_bot.keyboards import (
     customer_care_message_keyboard,
     customer_menu_keyboard,
     delivery_for_keyboard,
+    language_keyboard,
     owner_live_keyboard,
     owner_order_keyboard,
     owner_reply_keyboard,
@@ -30,6 +31,7 @@ from elitefeast_bot.keyboards import (
     single_product_keyboard,
     single_shop_keyboard,
 )
+from elitefeast_bot.i18n import LANGUAGES, menu_texts, t
 from elitefeast_bot.models import (
     CareMessageDirection,
     CareMessageStatus,
@@ -47,12 +49,14 @@ from elitefeast_bot.models import (
 from elitefeast_bot.services import (
     add_product_to_order,
     clear_draft_order,
+    customer_language,
     draft_order,
     draft_order_summary,
     remove_draft_item,
     live_shops,
     order_summary,
     shop_products,
+    set_customer_language,
     update_draft_item_quantity,
     upsert_user,
 )
@@ -99,19 +103,13 @@ def format_datetime(value) -> str:
     return value.strftime("%Y-%m-%d %H:%M")
 
 
-async def request_payment_receipt(message: Message, state: FSMContext) -> None:
+async def request_payment_receipt(message: Message, state: FSMContext, language: str) -> None:
     if not settings.payment_card_number:
         await state.clear()
-        await message.answer(
-            "Sorry, payment details are not available at the moment. Please contact Elite Feast before making payment."
-        )
+        await message.answer(t(language, "payment_missing"))
         return
     await state.set_state(Checkout.receipt)
-    await message.answer(
-        "Please make your payment to this bank card:\n"
-        f"{settings.payment_card_number}\n\n"
-        "After making payment, please upload a screenshot or photo of the payment receipt. Thank you."
-    )
+    await message.answer(t(language, "payment", card=settings.payment_card_number))
 
 
 async def active_customer_care_ids(session) -> List[int]:
@@ -155,8 +153,8 @@ async def notify_customer_care_agents(care_message: CustomerCareMessage, agent_i
             logging.exception("Could not notify customer-care agent %s", agent_id)
 
 
-async def send_shop_cards(message: Message, shops) -> None:
-    await message.answer("Please choose an available shop:")
+async def send_shop_cards(message: Message, shops, language: str = "en") -> None:
+    await message.answer(t(language, "choose_shop"))
     for shop in shops:
         caption = shop.name
         if shop.delivery_note:
@@ -165,14 +163,14 @@ async def send_shop_cards(message: Message, shops) -> None:
             await message.answer_photo(
                 shop.photo_file_id,
                 caption=caption,
-                reply_markup=single_shop_keyboard(shop.id),
+                reply_markup=single_shop_keyboard(shop.id, language),
             )
         else:
-            await message.answer(caption, reply_markup=single_shop_keyboard(shop.id))
+            await message.answer(caption, reply_markup=single_shop_keyboard(shop.id, language))
 
 
-async def send_product_cards(message: Message, shop: Shop, products) -> None:
-    await message.answer(f"{shop.name}\nPlease select the products you would like to add to your order:")
+async def send_product_cards(message: Message, shop: Shop, products, language: str = "en") -> None:
+    await message.answer(f"{shop.name}\n{t(language, 'select_products')}")
     for product in products:
         caption = f"{product.name}\n{float(product.price_rub):.2f} RUB"
         if product.description:
@@ -183,14 +181,14 @@ async def send_product_cards(message: Message, shop: Shop, products) -> None:
             await message.answer_photo(
                 product.photo_file_id,
                 caption=caption,
-                reply_markup=single_product_keyboard(product.id, shop.id),
+                reply_markup=single_product_keyboard(product.id, shop.id, language),
             )
         else:
-            await message.answer(caption, reply_markup=single_product_keyboard(product.id, shop.id))
+            await message.answer(caption, reply_markup=single_product_keyboard(product.id, shop.id, language))
 
 
-async def send_cart(message: Message, order: Order) -> None:
-    await message.answer(draft_order_summary(order), reply_markup=cart_keyboard(order))
+async def send_cart(message: Message, order: Order, language: str = "en") -> None:
+    await message.answer(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
 
 
 @dp.message(Command("start"))
@@ -199,24 +197,25 @@ async def start(message: Message) -> None:
         await upsert_user(session, message.from_user)
         shops = await live_shops(session)
         is_care_agent = await is_customer_care_agent(session, message.from_user.id)
+        language = await customer_language(session, message.from_user.id)
 
     if message.from_user.id in settings.admin_ids:
         menu = admin_menu_keyboard()
     elif is_care_agent:
         menu = customer_care_menu_keyboard()
     else:
-        menu = customer_menu_keyboard()
+        menu = customer_menu_keyboard(language)
     if not shops:
         await message.answer(
-            "No Elite Feast shops are live right now. Please check again soon.",
+            t(language, "no_shops"),
             reply_markup=menu,
         )
         return
 
     if any(shop.photo_file_id for shop in shops):
-        await send_shop_cards(message, shops)
+        await send_shop_cards(message, shops, language)
     else:
-        await message.answer("Please choose an available shop:", reply_markup=shops_keyboard(shops))
+        await message.answer(t(language, "choose_shop"), reply_markup=shops_keyboard(shops))
     await message.answer("Thank you. Please use the buttons below whenever you need them.", reply_markup=menu)
 
 
@@ -225,9 +224,26 @@ async def show_shops(message: Message) -> None:
     await start(message)
 
 
-@dp.message(F.text == "Browse shops")
+@dp.message(F.text.in_(menu_texts("browse_shops")))
 async def browse_shops_button(message: Message) -> None:
     await start(message)
+
+
+@dp.message(F.text.in_(menu_texts("language")))
+async def choose_language(message: Message) -> None:
+    await message.answer(t("en", "choose_language"), reply_markup=language_keyboard())
+
+
+@dp.callback_query(F.data.startswith("language:"))
+async def save_language(callback: CallbackQuery) -> None:
+    language = callback.data.split(":", 1)[1]
+    if language not in LANGUAGES:
+        await callback.answer("Unsupported language.", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        await set_customer_language(session, callback.from_user.id, language)
+    await callback.message.answer(t(language, "language_saved"), reply_markup=customer_menu_keyboard(language))
+    await callback.answer()
 
 
 @dp.message(Command("orders"))
@@ -239,12 +255,13 @@ async def show_orders(message: Message) -> None:
             .order_by(Order.created_at.desc())
         )
         orders = list(result.scalars())
+        language = await customer_language(session, message.from_user.id)
 
     if not orders:
-        await message.answer("You do not have any orders yet. Thank you for visiting Elite Feast.")
+        await message.answer(t(language, "no_orders"))
         return
 
-    lines = ["Thank you. Here are your orders:"]
+    lines = [t(language, "orders_title")]
     for order in orders[:10]:
         lines.append(f"#{order.id}: {order.status.value} - {float(order.total_rub or 0):.2f} RUB")
     async with SessionLocal() as session:
@@ -254,16 +271,16 @@ async def show_orders(message: Message) -> None:
     elif is_care_agent:
         menu = customer_care_menu_keyboard()
     else:
-        menu = customer_menu_keyboard()
+        menu = customer_menu_keyboard(language)
     await message.answer("\n".join(lines), reply_markup=menu)
     for order in orders[:10]:
         await message.answer(
             f"Order #{order.id}",
-            reply_markup=client_order_keyboard(order.id),
+            reply_markup=client_order_keyboard(order.id, language),
         )
 
 
-@dp.message(F.text == "My orders")
+@dp.message(F.text.in_(menu_texts("my_orders")))
 async def my_orders_button(message: Message) -> None:
     await show_orders(message)
 
@@ -290,7 +307,9 @@ async def show_telegram_id(message: Message) -> None:
     elif is_care_agent:
         menu = customer_care_menu_keyboard()
     else:
-        menu = customer_menu_keyboard()
+        async with SessionLocal() as session:
+            language = await customer_language(session, message.from_user.id)
+        menu = customer_menu_keyboard(language)
     await message.answer(
         f"Your Telegram ID: {message.from_user.id}\nAdministrator: {status}",
         reply_markup=menu,
@@ -530,10 +549,13 @@ async def review_rating(callback: CallbackQuery, state: FSMContext) -> None:
         if not order or order.client_telegram_id != callback.from_user.id:
             await callback.answer("Sorry, this is not your order.", show_alert=True)
             return
+        language = await customer_language(session, callback.from_user.id)
 
     await state.update_data(order_id=order_id, rating=rating)
     await state.set_state(ReviewFlow.comment)
-    await callback.message.answer("Thank you. Please send a short comment about the product, or send - to skip.")
+    await callback.message.answer(
+        t(language, "review", order_id=order_id) + "\n\n" + t(language, "review_comment")
+    )
     await callback.answer()
 
 
@@ -547,7 +569,8 @@ async def review_skip(callback: CallbackQuery) -> None:
             return
         session.add(Review(order_id=order.id, client_telegram_id=callback.from_user.id))
         await session.commit()
-    await callback.message.answer("No problem. Thank you for ordering from Elite Feast.")
+        language = await customer_language(session, callback.from_user.id)
+    await callback.message.answer(t(language, "review_skipped"))
     await callback.answer()
 
 
@@ -564,8 +587,9 @@ async def review_comment(message: Message, state: FSMContext) -> None:
         )
         session.add(review)
         await session.commit()
+        language = await customer_language(session, message.from_user.id)
     await state.clear()
-    await message.answer("Thank you for the review.")
+    await message.answer(t(language, "review_saved"))
     for admin_id in settings.admin_ids:
         await bot.send_message(
             admin_id,
@@ -590,10 +614,11 @@ async def message_order(message: Message, state: FSMContext) -> None:
         if not order.shop.owner_telegram_id:
             await message.answer("Sorry, this shop owner is not connected to Telegram yet. Please try again a little later.")
             return
+        language = await customer_language(session, message.from_user.id)
 
     await state.update_data(order_id=order_id, target="owner")
     await state.set_state(Messaging.waiting_for_message)
-    await message.answer("Please send the message you would like us to relay to the shop owner.")
+    await message.answer(t(language, "message_owner_prompt"))
 
 
 @dp.callback_query(F.data.startswith("message:owner:"))
@@ -608,10 +633,11 @@ async def message_owner(callback: CallbackQuery, state: FSMContext) -> None:
         if not order.shop.owner_telegram_id:
             await callback.answer("This shop owner is not connected to Telegram yet.", show_alert=True)
             return
+        language = await customer_language(session, callback.from_user.id)
 
     await state.update_data(order_id=order_id, target="owner")
     await state.set_state(Messaging.waiting_for_message)
-    await callback.message.answer("Please send the message you would like us to relay to the shop owner.")
+    await callback.message.answer(t(language, "message_owner_prompt"))
     await callback.answer()
 
 
@@ -1016,7 +1042,8 @@ async def admin_shop_cards(message: Message) -> None:
 async def shops_callback(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         shops = await live_shops(session)
-    await callback.message.edit_text("Please choose an available shop:", reply_markup=shops_keyboard(shops))
+        language = await customer_language(session, callback.from_user.id)
+    await callback.message.edit_text(t(language, "choose_shop"), reply_markup=shops_keyboard(shops))
     await callback.answer()
 
 
@@ -1027,6 +1054,7 @@ async def show_catalog(callback: CallbackQuery, state: FSMContext) -> None:
     async with SessionLocal() as session:
         shop = await session.get(Shop, shop_id)
         products = await shop_products(session, shop_id)
+        language = await customer_language(session, callback.from_user.id)
 
     if not products:
         await callback.message.edit_text(f"Sorry, {shop.name} has no available products right now. Please check again soon.")
@@ -1034,12 +1062,12 @@ async def show_catalog(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     if any(product.photo_file_id for product in products):
-        await callback.message.answer("Thank you. Please have a look through the catalog.")
-        await send_product_cards(callback.message, shop, products)
+        await callback.message.answer(t(language, "select_products"))
+        await send_product_cards(callback.message, shop, products, language)
     else:
         await callback.message.edit_text(
-            f"{shop.name}\n\nPlease select the products you would like to add to your order:",
-            reply_markup=product_keyboard(products, shop_id),
+            f"{shop.name}\n\n{t(language, 'select_products')}",
+            reply_markup=product_keyboard(products, shop_id, language),
         )
     await callback.answer()
 
@@ -1050,8 +1078,9 @@ async def add_product(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         order = await add_product_to_order(session, callback.from_user.id, product_id)
         order = await draft_order(session, callback.from_user.id, order.shop_id)
-    await callback.answer(f"Thank you. Added to order #{order.id}.")
-    await send_cart(callback.message, order)
+        language = await customer_language(session, callback.from_user.id)
+    await callback.answer(t(language, "added", order_id=order.id))
+    await send_cart(callback.message, order, language)
 
 
 @dp.callback_query(F.data.startswith("cart:decrease:"))
@@ -1065,11 +1094,12 @@ async def decrease_cart_item(callback: CallbackQuery) -> None:
             int(item_id_raw),
             -1,
         )
+        language = await customer_language(session, callback.from_user.id)
     if not order:
         await callback.answer("This cart is no longer available.", show_alert=True)
         return
-    await callback.message.edit_text(draft_order_summary(order), reply_markup=cart_keyboard(order))
-    await callback.answer("Cart updated")
+    await callback.message.edit_text(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
+    await callback.answer(t(language, "cart_updated"))
 
 
 @dp.callback_query(F.data.startswith("cart:remove:"))
@@ -1082,11 +1112,12 @@ async def remove_cart_item(callback: CallbackQuery) -> None:
             int(order_id_raw),
             int(item_id_raw),
         )
+        language = await customer_language(session, callback.from_user.id)
     if not order:
         await callback.answer("This cart is no longer available.", show_alert=True)
         return
-    await callback.message.edit_text(draft_order_summary(order), reply_markup=cart_keyboard(order))
-    await callback.answer("Item removed")
+    await callback.message.edit_text(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
+    await callback.answer(t(language, "item_removed"))
 
 
 @dp.callback_query(F.data.startswith("cart:clear:"))
@@ -1094,11 +1125,12 @@ async def clear_cart(callback: CallbackQuery) -> None:
     order_id = int(callback.data.split(":")[2])
     async with SessionLocal() as session:
         order = await clear_draft_order(session, callback.from_user.id, order_id)
+        language = await customer_language(session, callback.from_user.id)
     if not order:
         await callback.answer("This cart is no longer available.", show_alert=True)
         return
-    await callback.message.edit_text(draft_order_summary(order), reply_markup=cart_keyboard(order))
-    await callback.answer("Cart cleared")
+    await callback.message.edit_text(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
+    await callback.answer(t(language, "cart_cleared"))
 
 
 @dp.callback_query(F.data == "cart:ignore")
@@ -1111,11 +1143,12 @@ async def view_cart(callback: CallbackQuery) -> None:
     shop_id = int(callback.data.split(":")[1])
     async with SessionLocal() as session:
         order = await draft_order(session, callback.from_user.id, shop_id)
+        language = await customer_language(session, callback.from_user.id)
     if not order:
-        await callback.message.answer("Your cart is empty. Please add a product before checking out.")
+        await callback.message.answer(t(language, "cart_empty"))
         await callback.answer()
         return
-    await callback.message.answer(draft_order_summary(order), reply_markup=cart_keyboard(order))
+    await callback.message.answer(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
     await callback.answer()
 
 
@@ -1124,6 +1157,7 @@ async def checkout(callback: CallbackQuery, state: FSMContext) -> None:
     shop_id = int(callback.data.split(":")[1])
     async with SessionLocal() as session:
         shop = await session.get(Shop, shop_id)
+        language = await customer_language(session, callback.from_user.id)
         now = moscow_now()
         if not shop or not shop.is_live or (shop.orders_close_at and shop.orders_close_at <= now):
             await callback.message.answer("Sorry, this shop is no longer accepting orders right now. Please choose another available shop.")
@@ -1131,13 +1165,13 @@ async def checkout(callback: CallbackQuery, state: FSMContext) -> None:
             return
         order = await draft_order(session, callback.from_user.id, shop_id)
         if not order or not order.items:
-            await callback.message.answer("Your cart is empty. Please add a product before checking out.")
+            await callback.message.answer(t(language, "cart_empty"))
             await callback.answer()
             return
 
     await state.update_data(shop_id=shop_id)
     await state.set_state(Checkout.city)
-    await callback.message.answer("Please tell us which city this order is for.")
+    await callback.message.answer(t(language, "city"))
     await callback.answer()
 
 
@@ -1160,6 +1194,7 @@ async def checkout_city(message: Message, state: FSMContext) -> None:
         product_names = list(result.scalars())
         products = await shop_products(session, shop_id, city)
         allowed_names = {product.name for product in products}
+        language = await customer_language(session, message.from_user.id)
 
     unavailable_names = [name for name in product_names if name not in allowed_names]
     if unavailable_names:
@@ -1173,25 +1208,29 @@ async def checkout_city(message: Message, state: FSMContext) -> None:
 
     await state.update_data(city=city)
     await state.set_state(Checkout.delivery_address)
-    await message.answer("Please send the delivery address.")
+    await message.answer(t(language, "address"))
 
 
 @dp.message(Checkout.delivery_address)
 async def checkout_address(message: Message, state: FSMContext) -> None:
     await state.update_data(delivery_address=message.text.strip())
     await state.set_state(Checkout.delivery_for)
-    await message.answer("Please let us know who this delivery is for.", reply_markup=delivery_for_keyboard())
+    async with SessionLocal() as session:
+        language = await customer_language(session, message.from_user.id)
+    await message.answer(t(language, "delivery_for"), reply_markup=delivery_for_keyboard(language))
 
 
 @dp.callback_query(Checkout.delivery_for, F.data.startswith("delivery_for:"))
 async def checkout_delivery_for(callback: CallbackQuery, state: FSMContext) -> None:
     delivery_for = callback.data.split(":")[1]
+    async with SessionLocal() as session:
+        language = await customer_language(session, callback.from_user.id)
     await state.update_data(delivery_for=delivery_for)
     if delivery_for == DeliveryFor.SOMEONE_ELSE.value:
         await state.set_state(Checkout.recipient_name)
-        await callback.message.answer("Please send the recipient's name.")
+        await callback.message.answer(t(language, "recipient_name"))
     else:
-        await request_payment_receipt(callback.message, state)
+        await request_payment_receipt(callback.message, state, language)
     await callback.answer()
 
 
@@ -1199,13 +1238,17 @@ async def checkout_delivery_for(callback: CallbackQuery, state: FSMContext) -> N
 async def checkout_recipient_name(message: Message, state: FSMContext) -> None:
     await state.update_data(recipient_name=message.text.strip())
     await state.set_state(Checkout.recipient_phone)
-    await message.answer("Please send the recipient's phone number.")
+    async with SessionLocal() as session:
+        language = await customer_language(session, message.from_user.id)
+    await message.answer(t(language, "recipient_phone"))
 
 
 @dp.message(Checkout.recipient_phone)
 async def checkout_recipient_phone(message: Message, state: FSMContext) -> None:
     await state.update_data(recipient_phone=message.text.strip())
-    await request_payment_receipt(message, state)
+    async with SessionLocal() as session:
+        language = await customer_language(session, message.from_user.id)
+    await request_payment_receipt(message, state, language)
 
 
 @dp.message(Checkout.receipt, F.photo)
@@ -1232,8 +1275,9 @@ async def checkout_receipt(message: Message, state: FSMContext) -> None:
         order.status = OrderStatus.PENDING_RECEIPT_REVIEW
         await session.commit()
         summary = await order_summary(session, order)
+        language = await customer_language(session, message.from_user.id)
 
-    await message.answer("Thank you. We have received your receipt, and your order is now awaiting confirmation.")
+    await message.answer(t(language, "receipt_received"))
     for admin_id in settings.admin_ids:
         await bot.send_photo(
             admin_id,
@@ -1259,7 +1303,8 @@ async def admin_action(callback: CallbackQuery) -> None:
             order.status = OrderStatus.PROCESSING
             await session.commit()
             summary = await order_summary(session, order)
-            await bot.send_message(order.client_telegram_id, f"Thank you. Your payment for order #{order.id} has been confirmed, and the order is now being processed.")
+            language = await customer_language(session, order.client_telegram_id)
+            await bot.send_message(order.client_telegram_id, t(language, "approved", order_id=order.id))
             if order.shop.owner_telegram_id:
                 await bot.send_message(
                     order.shop.owner_telegram_id,
@@ -1270,7 +1315,8 @@ async def admin_action(callback: CallbackQuery) -> None:
         elif action == "reject":
             order.status = OrderStatus.REJECTED
             await session.commit()
-            await bot.send_message(order.client_telegram_id, f"Sorry, we could not confirm the receipt for order #{order.id}. Please contact us if you need any assistance.")
+            language = await customer_language(session, order.client_telegram_id)
+            await bot.send_message(order.client_telegram_id, t(language, "rejected", order_id=order.id))
             await callback.message.answer(f"Order #{order.id} rejected.")
     await callback.answer()
 
@@ -1447,7 +1493,8 @@ async def owner_order_action(callback: CallbackQuery) -> None:
             order.status = OrderStatus.DELIVERED
             order.delivered_at = datetime.utcnow()
         await session.commit()
-    await bot.send_message(order.client_telegram_id, f"Thank you. The status of order #{order.id} is now: {order.status.value}.")
+        language = await customer_language(session, order.client_telegram_id)
+    await bot.send_message(order.client_telegram_id, t(language, "status", order_id=order.id, status=order.status.value))
     for admin_id in settings.admin_ids:
         await bot.send_message(
             admin_id,
@@ -1605,10 +1652,11 @@ async def review_request_loop() -> None:
                 )
                 orders = list(result.scalars())
                 for order in orders:
+                    language = await customer_language(session, order.client_telegram_id)
                     await bot.send_message(
                         order.client_telegram_id,
-                        f"Thank you for your order. How was order #{order.id}? Please rate the product when you have a moment.",
-                        reply_markup=review_rating_keyboard(order.id),
+                        t(language, "review", order_id=order.id),
+                        reply_markup=review_rating_keyboard(order.id, language),
                     )
                     order.review_requested_at = datetime.utcnow()
                 await session.commit()

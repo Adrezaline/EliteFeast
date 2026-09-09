@@ -6,13 +6,14 @@ from aiogram.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
 )
+from elitefeast_bot.i18n import t
 
 
-def customer_menu_keyboard() -> ReplyKeyboardMarkup:
+def customer_menu_keyboard(language: str = "en") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Browse shops"), KeyboardButton(text="My orders")],
-            [KeyboardButton(text="My Telegram ID")],
+            [KeyboardButton(text=t(language, "browse_shops")), KeyboardButton(text=t(language, "my_orders"))],
+            [KeyboardButton(text=t(language, "language"))],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -63,10 +64,20 @@ def owner_reply_keyboard(order_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def client_order_keyboard(order_id: int) -> InlineKeyboardMarkup:
+def client_order_keyboard(order_id: int, language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Message shop owner", callback_data=f"message:owner:{order_id}")],
+            [InlineKeyboardButton(text=t(language, "message_owner"), callback_data=f"message:owner:{order_id}")],
+        ]
+    )
+
+
+def language_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="English", callback_data="language:en")],
+            [InlineKeyboardButton(text="Francais", callback_data="language:fr")],
+            [InlineKeyboardButton(text="Русский", callback_data="language:ru")],
         ]
     )
 
@@ -80,63 +91,63 @@ def shops_keyboard(shops: List) -> InlineKeyboardMarkup:
     )
 
 
-def single_shop_keyboard(shop_id: int) -> InlineKeyboardMarkup:
+def single_shop_keyboard(shop_id: int, language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Open catalog", callback_data=f"shop:{shop_id}")],
+            [InlineKeyboardButton(text=t(language, "open_catalog"), callback_data=f"shop:{shop_id}")],
         ]
     )
 
 
-def product_keyboard(products: List, shop_id: int) -> InlineKeyboardMarkup:
+def product_keyboard(products: List, shop_id: int, language: str = "en") -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=f"Add {product.name} - {float(product.price_rub):.2f} RUB",
+                text=f"{t(language, 'add_to_order')}: {product.name} - {float(product.price_rub):.2f} RUB",
                 callback_data=f"add:{product.id}",
             )
         ]
         for product in products
     ]
-    rows.append([InlineKeyboardButton(text="View cart", callback_data=f"cart:{shop_id}")])
-    rows.append([InlineKeyboardButton(text="Checkout", callback_data=f"checkout:{shop_id}")])
-    rows.append([InlineKeyboardButton(text="Back to shops", callback_data="shops")])
+    rows.append([InlineKeyboardButton(text=t(language, "view_cart"), callback_data=f"cart:{shop_id}")])
+    rows.append([InlineKeyboardButton(text=t(language, "checkout"), callback_data=f"checkout:{shop_id}")])
+    rows.append([InlineKeyboardButton(text=t(language, "back_to_shops"), callback_data="shops")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def delivery_for_keyboard() -> InlineKeyboardMarkup:
+def delivery_for_keyboard(language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="For myself", callback_data="delivery_for:self")],
-            [InlineKeyboardButton(text="For someone else", callback_data="delivery_for:someone_else")],
+            [InlineKeyboardButton(text=t(language, "for_myself"), callback_data="delivery_for:self")],
+            [InlineKeyboardButton(text=t(language, "for_someone_else"), callback_data="delivery_for:someone_else")],
         ]
     )
 
 
-def single_product_keyboard(product_id: int, shop_id: int) -> InlineKeyboardMarkup:
+def single_product_keyboard(product_id: int, shop_id: int, language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Add to order", callback_data=f"add:{product_id}")],
-            [InlineKeyboardButton(text="View cart", callback_data=f"cart:{shop_id}")],
-            [InlineKeyboardButton(text="Checkout", callback_data=f"checkout:{shop_id}")],
+            [InlineKeyboardButton(text=t(language, "add_to_order"), callback_data=f"add:{product_id}")],
+            [InlineKeyboardButton(text=t(language, "view_cart"), callback_data=f"cart:{shop_id}")],
+            [InlineKeyboardButton(text=t(language, "checkout"), callback_data=f"checkout:{shop_id}")],
         ]
     )
 
 
-def cart_keyboard(order) -> InlineKeyboardMarkup:
+def cart_keyboard(order, language: str = "en") -> InlineKeyboardMarkup:
     rows = []
     for item in order.items:
         rows.append(
             [
                 InlineKeyboardButton(text="-", callback_data=f"cart:decrease:{order.id}:{item.id}"),
                 InlineKeyboardButton(text=f"{item.product_name} x{item.quantity}", callback_data="cart:ignore"),
-                InlineKeyboardButton(text="Remove", callback_data=f"cart:remove:{order.id}:{item.id}"),
+                InlineKeyboardButton(text=t(language, "remove"), callback_data=f"cart:remove:{order.id}:{item.id}"),
             ]
         )
     if order.items:
-        rows.append([InlineKeyboardButton(text="Clear cart", callback_data=f"cart:clear:{order.id}")])
-        rows.append([InlineKeyboardButton(text="Checkout", callback_data=f"checkout:{order.shop_id}")])
-    rows.append([InlineKeyboardButton(text="Back to catalog", callback_data=f"shop:{order.shop_id}")])
+        rows.append([InlineKeyboardButton(text=t(language, "clear_cart"), callback_data=f"cart:clear:{order.id}")])
+        rows.append([InlineKeyboardButton(text=t(language, "checkout"), callback_data=f"checkout:{order.shop_id}")])
+    rows.append([InlineKeyboardButton(text=t(language, "back_to_catalog"), callback_data=f"shop:{order.shop_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -181,7 +192,7 @@ def owner_weekly_prompt_keyboard(shop_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def review_rating_keyboard(order_id: int) -> InlineKeyboardMarkup:
+def review_rating_keyboard(order_id: int, language: str = "en") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -191,6 +202,6 @@ def review_rating_keyboard(order_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="4", callback_data=f"review:rating:{order_id}:4"),
                 InlineKeyboardButton(text="5", callback_data=f"review:rating:{order_id}:5"),
             ],
-            [InlineKeyboardButton(text="Skip review", callback_data=f"review:skip:{order_id}")],
+            [InlineKeyboardButton(text=t(language, "skip_review"), callback_data=f"review:skip:{order_id}")],
         ]
     )

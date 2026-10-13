@@ -78,6 +78,14 @@ The repository pins Render to Python 3.11.11 in `.python-version`. Do not overri
 
 Use a Render PostgreSQL database for `DATABASE_URL`; the default SQLite file is not persistent across Render deployments or restarts. You can paste Render's internal PostgreSQL URL exactly as shown in its dashboard. The bot automatically configures it to use the async PostgreSQL driver.
 
+## Customer Languages
+
+The bot supports Russian, English, and French. On `/start`, it detects the Telegram language for accounts without a saved language choice (including `ru-RU` and `ru_RU`). A saved choice always takes priority. Customers can switch using the Language / Язык / Langue button. Russian customer messages, order statuses, command descriptions, and ruble symbols are localized. Product names, descriptions, city names, and shop delivery notes are entered by administrators and are displayed as stored; provide Russian text for these separately. Staff panels remain in English.
+
+## Order Delivery Dates
+
+After payment approval, the shop owner opens `/owner_orders` and chooses **Set delivery date** (or **Mark processing**). Enter a date as `DD.MM.YYYY` or `YYYY-MM-DD`; `/cancel` stops the update. Owners can update dates only for their own processing orders, and administrators can set dates using an order's button. Past dates are rejected using Moscow's calendar date. The customer receives the confirmed date in their selected language and can see it in **My orders**. Approval displays “awaiting confirmation” until the owner sets a date. Existing SQLite and PostgreSQL databases receive the nullable delivery-date column on startup.
+
 ## WooCommerce Integration
 
 The bot currently uses its own database so shop owners can manage availability directly in Telegram. The `elitefeast_bot/integrations/woocommerce.py` file is a placeholder for syncing shops/products from EliteFeast.ru once WooCommerce API credentials are available.

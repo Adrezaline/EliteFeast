@@ -48,3 +48,7 @@ class OwnerLiveWindow(StatesGroup):
 class ReviewFlow(StatesGroup):
     rating = State()
     comment = State()
+
+
+class OrderDeliveryDate(StatesGroup):
+    date = State()

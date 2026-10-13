@@ -152,6 +152,49 @@ TEXT = {
 }
 
 
+CUSTOMER_TEXT = {
+    "delivery_date": ("Delivery date: {date}", "Date de livraison : {date}", "Дата доставки: {date}"),
+    "delivery_date_pending": ("awaiting confirmation", "en attente de confirmation", "ожидает подтверждения"),
+    "menu_hint": ("Please use the buttons below whenever you need them.", "Utilisez les boutons ci-dessous lorsque vous en avez besoin.", "Пользуйтесь кнопками ниже для выбора товаров и просмотра заказов."),
+    "available_cities": ("Available: {cities}", "Disponible : {cities}", "Доступно в городах: {cities}"),
+    "all_cities": ("all cities in Russia", "toutes les villes de Russie", "все города России"),
+    "cart_unavailable": ("This cart is no longer available.", "Ce panier n’est plus disponible.", "Эта корзина больше недоступна."),
+    "shop_closed": ("This shop is no longer accepting orders. Please choose another available shop.", "Cette boutique ne prend plus de commandes. Choisissez une autre boutique disponible.", "Этот магазин сейчас не принимает заказы. Выберите другой доступный магазин."),
+    "catalog_empty": ("{shop} has no available products right now. Please check again soon.", "{shop} n’a aucun produit disponible pour le moment. Revenez bientôt.", "В магазине {shop} сейчас нет доступных товаров. Загляните позже."),
+    "city_unavailable": ("Some items in your cart are unavailable for that city:\n{items}\n\nPlease edit your cart or choose another shop with /shops.", "Certains produits ne sont pas disponibles dans cette ville :\n{items}\n\nModifiez votre panier ou choisissez une autre boutique avec /shops.", "Некоторые товары недоступны в указанном городе:\n{items}\n\nИзмените корзину или выберите другой магазин: /shops."),
+    "not_your_order": ("This order does not belong to your account.", "Cette commande n’appartient pas à votre compte.", "Этот заказ не принадлежит вашему аккаунту."),
+    "order_unavailable": ("This order is no longer available.", "Cette commande n’est plus disponible.", "Этот заказ больше недоступен."),
+    "order_not_found": ("No order was found for your account. Check the order number and try again.", "Aucune commande trouvée pour votre compte. Vérifiez le numéro et réessayez.", "Заказ для вашего аккаунта не найден. Проверьте номер и попробуйте снова."),
+    "owner_not_connected": ("The shop owner is not connected to Telegram yet. Please try again later.", "Le vendeur n’est pas encore connecté à Telegram. Réessayez plus tard.", "Владелец магазина ещё не подключён к Telegram. Попробуйте позже."),
+    "message_order_usage": ("Send the order number like this: /message_order 15", "Envoyez le numéro ainsi : /message_order 15", "Отправьте номер заказа так: /message_order 15"),
+    "care_pending_owner": ("Your message is with customer care for review before it is shared with the shop owner.", "Votre message sera vérifié par le service client avant son envoi au vendeur.", "Ваше сообщение передано в службу поддержки для проверки перед отправкой владельцу магазина."),
+    "care_pending_client": ("Your message is with customer care for review before it is shared with the customer.", "Votre message sera vérifié par le service client avant son envoi au client.", "Ваше сообщение передано в службу поддержки для проверки перед отправкой покупателю."),
+    "no_recipient": ("No recipient is assigned yet. Please try again later.", "Aucun destinataire n’est encore attribué. Réessayez plus tard.", "Получатель ещё не назначен. Попробуйте позже."),
+    "order_title": ("Order #{order_id}", "Commande n°{order_id}", "Заказ №{order_id}"),
+    "owner_response": ("Shop owner response about order #{order_id}:\n\n{message}", "Réponse du vendeur concernant la commande n°{order_id} :\n\n{message}", "Ответ владельца магазина по заказу №{order_id}:\n\n{message}"),
+    "care_response": ("Customer care message about order #{order_id}:\n\n{message}", "Message du service client concernant la commande n°{order_id} :\n\n{message}", "Сообщение службы поддержки по заказу №{order_id}:\n\n{message}"),
+    "order_message": ("Message about order #{order_id}:\n\n{message}", "Message concernant la commande n°{order_id} :\n\n{message}", "Сообщение по заказу №{order_id}:\n\n{message}"),
+    "status_draft": ("Cart", "Panier", "Корзина"),
+    "status_pending_receipt_review": ("Awaiting payment confirmation", "En attente de confirmation du paiement", "Ожидает подтверждения оплаты"),
+    "status_rejected": ("Payment not confirmed", "Paiement non confirmé", "Оплата не подтверждена"),
+    "status_processing": ("Being prepared", "En préparation", "В работе"),
+    "status_delivered": ("Delivered", "Livrée", "Доставлен"),
+}
+for key, translations in CUSTOMER_TEXT.items():
+    for language, value in zip(("en", "fr", "ru"), translations):
+        TEXT[language][key] = value
+TEXT["ru"]["total"] = "Итого: {total:.2f} ₽"
+
+
+def status_text(language: str, status) -> str:
+    value = getattr(status, "value", status)
+    return t(language, f"status_{value}")
+
+
+def currency(language: str) -> str:
+    return "₽" if language == "ru" else "RUB"
+
+
 def t(language: str, key: str, **values) -> str:
     selected = language if language in LANGUAGES else "en"
     return TEXT[selected][key].format(**values)

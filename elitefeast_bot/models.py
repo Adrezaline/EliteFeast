@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum as PyEnum
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -110,6 +110,7 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.DRAFT)
     city: Mapped[Optional[str]] = mapped_column(String(255))
     delivery_address: Mapped[Optional[str]] = mapped_column(Text)
+    delivery_date: Mapped[Optional[date]] = mapped_column(Date)
     delivery_for: Mapped[Optional[DeliveryFor]] = mapped_column(Enum(DeliveryFor))
     recipient_name: Mapped[Optional[str]] = mapped_column(String(255))
     recipient_phone: Mapped[Optional[str]] = mapped_column(String(255))

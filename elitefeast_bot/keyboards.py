@@ -6,7 +6,7 @@ from aiogram.types import (
     KeyboardButton,
     ReplyKeyboardMarkup,
 )
-from elitefeast_bot.i18n import t
+from elitefeast_bot.i18n import currency, t
 
 
 def customer_menu_keyboard(language: str = "en") -> ReplyKeyboardMarkup:
@@ -76,7 +76,7 @@ def language_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="English", callback_data="language:en")],
-            [InlineKeyboardButton(text="Francais", callback_data="language:fr")],
+            [InlineKeyboardButton(text="Français", callback_data="language:fr")],
             [InlineKeyboardButton(text="Русский", callback_data="language:ru")],
         ]
     )
@@ -103,7 +103,7 @@ def product_keyboard(products: List, shop_id: int, language: str = "en") -> Inli
     rows = [
         [
             InlineKeyboardButton(
-                text=f"{t(language, 'add_to_order')}: {product.name} - {float(product.price_rub):.2f} RUB",
+                text=f"{t(language, 'add_to_order')}: {product.name} - {float(product.price_rub):.2f} {currency(language)}",
                 callback_data=f"add:{product.id}",
             )
         ]
@@ -165,6 +165,7 @@ def admin_receipt_keyboard(order_id: int) -> InlineKeyboardMarkup:
 def owner_order_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="Set delivery date", callback_data=f"delivery_date:{order_id}")],
             [InlineKeyboardButton(text="Mark processing", callback_data=f"owner:processing:{order_id}")],
             [InlineKeyboardButton(text="Mark delivered", callback_data=f"owner:delivered:{order_id}")],
             [InlineKeyboardButton(text="Message client", callback_data=f"message:client:{order_id}")],

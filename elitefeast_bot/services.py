@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from elitefeast_bot.i18n import LANGUAGES, t
+from elitefeast_bot.i18n import LANGUAGES, currency, t
 from elitefeast_bot.models import CustomerLanguagePreference, Order, OrderItem, OrderStatus, Product, Shop, User, UserRole
 
 
@@ -21,6 +21,15 @@ async def upsert_user(session: AsyncSession, telegram_user, role: UserRole = Use
     else:
         user.full_name = telegram_user.full_name
         user.username = telegram_user.username
+    preference = await session.scalar(
+        select(CustomerLanguagePreference).where(CustomerLanguagePreference.telegram_id == telegram_user.id)
+    )
+    if preference is None:
+        language = (getattr(telegram_user, "language_code", None) or "en").lower().split("-")[0].split("_")[0]
+        session.add(CustomerLanguagePreference(
+            telegram_id=telegram_user.id,
+            language=language if language in LANGUAGES else "en",
+        ))
     await session.commit()
     return user
 
@@ -192,13 +201,18 @@ async def clear_draft_order(session: AsyncSession, client_telegram_id: int, orde
     return order
 
 
+def delivery_date_text(order: Order, language: str) -> str:
+    date = order.delivery_date.strftime("%d.%m.%Y") if order.delivery_date else t(language, "delivery_date_pending")
+    return t(language, "delivery_date", date=date)
+
+
 def draft_order_summary(order: Order, language: str = "en") -> str:
     lines = [t(language, "cart_for", shop=order.shop.name)]
     if not order.items:
         return t(language, "cart_empty_browse")
     for item in order.items:
         line_total = float(item.unit_price_rub) * item.quantity
-        lines.append(f"- {item.product_name} x{item.quantity}: {line_total:.2f} RUB")
+        lines.append(f"- {item.product_name} x{item.quantity}: {line_total:.2f} {currency(language)}")
     lines.extend(["", t(language, "total", total=float(order.total_rub or 0))])
     return "\n".join(lines)
 
@@ -220,6 +234,7 @@ async def order_summary(session: AsyncSession, order: Order) -> str:
             f"Total: {float(order.total_rub or 0):.2f} RUB",
             f"City: {order.city or '-'}",
             f"Address: {order.delivery_address or '-'}",
+            delivery_date_text(order, "en"),
         ]
     )
     return "\n".join(lines)

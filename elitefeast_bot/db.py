@@ -33,10 +33,14 @@ async def init_db() -> None:
                 await conn.exec_driver_sql("ALTER TABLE products ADD COLUMN allowed_cities_csv TEXT")
             columns = await conn.exec_driver_sql("PRAGMA table_info(orders)")
             column_names = {row[1] for row in columns}
+            if "delivery_date" not in column_names:
+                await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN delivery_date DATE")
             if "delivered_at" not in column_names:
                 await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN delivered_at DATETIME")
             if "review_requested_at" not in column_names:
                 await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN review_requested_at DATETIME")
+        elif conn.dialect.name == "postgresql":
+            await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_date DATE")
 
 
 async def session_scope() -> AsyncIterator[AsyncSession]:

@@ -31,7 +31,7 @@ from elitefeast_bot.keyboards import (
     single_product_keyboard,
     single_shop_keyboard,
 )
-from elitefeast_bot.i18n import LANGUAGES, menu_texts, t
+from elitefeast_bot.i18n import LANGUAGES, currency, menu_texts, status_text, t
 from elitefeast_bot.models import (
     CareMessageDirection,
     CareMessageStatus,
@@ -50,6 +50,7 @@ from elitefeast_bot.services import (
     add_product_to_order,
     clear_draft_order,
     customer_language,
+    delivery_date_text,
     draft_order,
     draft_order_summary,
     remove_draft_item,
@@ -69,6 +70,7 @@ from elitefeast_bot.states import (
     CustomerCare,
     Messaging,
     OwnerLiveWindow,
+    OrderDeliveryDate,
     ReviewFlow,
 )
 
@@ -110,6 +112,12 @@ async def request_payment_receipt(message: Message, state: FSMContext, language:
         return
     await state.set_state(Checkout.receipt)
     await message.answer(t(language, "payment", card=settings.payment_card_number))
+
+
+async def user_text(telegram_id: int, key: str, **values) -> str:
+    async with SessionLocal() as session:
+        language = await customer_language(session, telegram_id)
+    return t(language, key, **values)
 
 
 async def active_customer_care_ids(session) -> List[int]:
@@ -172,11 +180,11 @@ async def send_shop_cards(message: Message, shops, language: str = "en") -> None
 async def send_product_cards(message: Message, shop: Shop, products, language: str = "en") -> None:
     await message.answer(f"{shop.name}\n{t(language, 'select_products')}")
     for product in products:
-        caption = f"{product.name}\n{float(product.price_rub):.2f} RUB"
+        caption = f"{product.name}\n{float(product.price_rub):.2f} {currency(language)}"
         if product.description:
             caption = f"{caption}\n{product.description}"
-        availability = product.allowed_cities_csv or "all cities in Russia"
-        caption = f"{caption}\nAvailable: {availability}"
+        availability = product.allowed_cities_csv or t(language, "all_cities")
+        caption += "\n" + t(language, "available_cities", cities=availability)
         if product.photo_file_id:
             await message.answer_photo(
                 product.photo_file_id,
@@ -216,7 +224,7 @@ async def start(message: Message) -> None:
         await send_shop_cards(message, shops, language)
     else:
         await message.answer(t(language, "choose_shop"), reply_markup=shops_keyboard(shops))
-    await message.answer("Thank you. Please use the buttons below whenever you need them.", reply_markup=menu)
+    await message.answer(t(language, "menu_hint"), reply_markup=menu)
 
 
 @dp.message(Command("shops"))
@@ -231,7 +239,9 @@ async def browse_shops_button(message: Message) -> None:
 
 @dp.message(F.text.in_(menu_texts("language")))
 async def choose_language(message: Message) -> None:
-    await message.answer(t("en", "choose_language"), reply_markup=language_keyboard())
+    async with SessionLocal() as session:
+        language = await customer_language(session, message.from_user.id)
+    await message.answer(t(language, "choose_language"), reply_markup=language_keyboard())
 
 
 @dp.callback_query(F.data.startswith("language:"))
@@ -263,7 +273,9 @@ async def show_orders(message: Message) -> None:
 
     lines = [t(language, "orders_title")]
     for order in orders[:10]:
-        lines.append(f"#{order.id}: {order.status.value} - {float(order.total_rub or 0):.2f} RUB")
+        lines.append(f"#{order.id}: {status_text(language, order.status)} - {float(order.total_rub or 0):.2f} {currency(language)}")
+        if order.status in (OrderStatus.PROCESSING, OrderStatus.DELIVERED):
+            lines.append(delivery_date_text(order, language))
     async with SessionLocal() as session:
         is_care_agent = await is_customer_care_agent(session, message.from_user.id)
     if message.from_user.id in settings.admin_ids:
@@ -275,7 +287,7 @@ async def show_orders(message: Message) -> None:
     await message.answer("\n".join(lines), reply_markup=menu)
     for order in orders[:10]:
         await message.answer(
-            f"Order #{order.id}",
+            t(language, "order_title", order_id=order.id),
             reply_markup=client_order_keyboard(order.id, language),
         )
 
@@ -479,7 +491,7 @@ async def approve_customer_care_message(callback: CallbackQuery) -> None:
         text = f"Customer message about order #{care_message.order_id}:\n\n{care_message.message}"
         reply_markup = owner_reply_keyboard(care_message.order_id)
     else:
-        text = f"Shop owner response about order #{care_message.order_id}:\n\n{care_message.message}"
+        text = await user_text(care_message.recipient_telegram_id, "owner_response", order_id=care_message.order_id, message=care_message.message)
         reply_markup = None
     await bot.send_message(care_message.recipient_telegram_id, text, reply_markup=reply_markup)
     await callback.message.answer(f"Message for order #{care_message.order_id} approved and sent.")
@@ -533,7 +545,7 @@ async def send_customer_care_reply(message: Message, state: FSMContext) -> None:
     recipient = "customer" if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER else "shop owner"
     await bot.send_message(
         care_message.sender_telegram_id,
-        f"Customer care message about order #{care_message.order_id}:\n\n{message.text}",
+        await user_text(care_message.sender_telegram_id, "care_response", order_id=care_message.order_id, message=message.text),
     )
     await state.clear()
     await message.answer(f"Your reply has been sent to the {recipient}.")
@@ -547,7 +559,7 @@ async def review_rating(callback: CallbackQuery, state: FSMContext) -> None:
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != callback.from_user.id:
-            await callback.answer("Sorry, this is not your order.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "not_your_order"), show_alert=True)
             return
         language = await customer_language(session, callback.from_user.id)
 
@@ -565,7 +577,7 @@ async def review_skip(callback: CallbackQuery) -> None:
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != callback.from_user.id:
-            await callback.answer("Sorry, this is not your order.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "not_your_order"), show_alert=True)
             return
         session.add(Review(order_id=order.id, client_telegram_id=callback.from_user.id))
         await session.commit()
@@ -601,18 +613,18 @@ async def review_comment(message: Message, state: FSMContext) -> None:
 async def message_order(message: Message, state: FSMContext) -> None:
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer("Please send the order number like this: /message_order 15")
+        await message.answer(await user_text(message.from_user.id, "message_order_usage"))
         return
 
     order_id = int(parts[1])
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != message.from_user.id:
-            await message.answer("Sorry, I could not find that order for your Telegram account. Please check the order number and try again.")
+            await message.answer(await user_text(message.from_user.id, "order_not_found"))
             return
         await session.refresh(order, attribute_names=["shop"])
         if not order.shop.owner_telegram_id:
-            await message.answer("Sorry, this shop owner is not connected to Telegram yet. Please try again a little later.")
+            await message.answer(await user_text(message.from_user.id, "owner_not_connected"))
             return
         language = await customer_language(session, message.from_user.id)
 
@@ -627,11 +639,11 @@ async def message_owner(callback: CallbackQuery, state: FSMContext) -> None:
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         if not order or order.client_telegram_id != callback.from_user.id:
-            await callback.answer("Sorry, this is not your order.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "not_your_order"), show_alert=True)
             return
         await session.refresh(order, attribute_names=["shop"])
         if not order.shop.owner_telegram_id:
-            await callback.answer("This shop owner is not connected to Telegram yet.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "owner_not_connected"), show_alert=True)
             return
         language = await customer_language(session, callback.from_user.id)
 
@@ -1057,7 +1069,7 @@ async def show_catalog(callback: CallbackQuery, state: FSMContext) -> None:
         language = await customer_language(session, callback.from_user.id)
 
     if not products:
-        await callback.message.edit_text(f"Sorry, {shop.name} has no available products right now. Please check again soon.")
+        await callback.message.edit_text(t(language, "catalog_empty", shop=shop.name))
         await callback.answer()
         return
 
@@ -1096,7 +1108,7 @@ async def decrease_cart_item(callback: CallbackQuery) -> None:
         )
         language = await customer_language(session, callback.from_user.id)
     if not order:
-        await callback.answer("This cart is no longer available.", show_alert=True)
+        await callback.answer(t(language, "cart_unavailable"), show_alert=True)
         return
     await callback.message.edit_text(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
     await callback.answer(t(language, "cart_updated"))
@@ -1114,7 +1126,7 @@ async def remove_cart_item(callback: CallbackQuery) -> None:
         )
         language = await customer_language(session, callback.from_user.id)
     if not order:
-        await callback.answer("This cart is no longer available.", show_alert=True)
+        await callback.answer(t(language, "cart_unavailable"), show_alert=True)
         return
     await callback.message.edit_text(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
     await callback.answer(t(language, "item_removed"))
@@ -1127,7 +1139,7 @@ async def clear_cart(callback: CallbackQuery) -> None:
         order = await clear_draft_order(session, callback.from_user.id, order_id)
         language = await customer_language(session, callback.from_user.id)
     if not order:
-        await callback.answer("This cart is no longer available.", show_alert=True)
+        await callback.answer(t(language, "cart_unavailable"), show_alert=True)
         return
     await callback.message.edit_text(draft_order_summary(order, language), reply_markup=cart_keyboard(order, language))
     await callback.answer(t(language, "cart_cleared"))
@@ -1160,7 +1172,7 @@ async def checkout(callback: CallbackQuery, state: FSMContext) -> None:
         language = await customer_language(session, callback.from_user.id)
         now = moscow_now()
         if not shop or not shop.is_live or (shop.orders_close_at and shop.orders_close_at <= now):
-            await callback.message.answer("Sorry, this shop is no longer accepting orders right now. Please choose another available shop.")
+            await callback.message.answer(t(language, "shop_closed"))
             await callback.answer()
             return
         order = await draft_order(session, callback.from_user.id, shop_id)
@@ -1200,9 +1212,7 @@ async def checkout_city(message: Message, state: FSMContext) -> None:
     if unavailable_names:
         await state.clear()
         await message.answer(
-            "Sorry, some items in your cart are not available for that city:\n"
-            + "\n".join(f"- {name}" for name in unavailable_names)
-            + "\n\nPlease start a new order with /shops. Thank you for your understanding."
+            t(language, "city_unavailable", items="\n".join(f"- {name}" for name in unavailable_names))
         )
         return
 
@@ -1304,7 +1314,10 @@ async def admin_action(callback: CallbackQuery) -> None:
             await session.commit()
             summary = await order_summary(session, order)
             language = await customer_language(session, order.client_telegram_id)
-            await bot.send_message(order.client_telegram_id, t(language, "approved", order_id=order.id))
+            await bot.send_message(
+                order.client_telegram_id,
+                t(language, "approved", order_id=order.id) + "\n" + delivery_date_text(order, language),
+            )
             if order.shop.owner_telegram_id:
                 await bot.send_message(
                     order.shop.owner_telegram_id,
@@ -1477,24 +1490,92 @@ async def owner_week_off(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@dp.callback_query(F.data.startswith("delivery_date:"))
+async def set_order_delivery_date(callback: CallbackQuery, state: FSMContext) -> None:
+    order_id = int(callback.data.split(":")[-1])
+    async with SessionLocal() as session:
+        order = await session.get(Order, order_id)
+        if not order:
+            await callback.answer("Order not found.", show_alert=True)
+            return
+        await session.refresh(order, attribute_names=["shop"])
+        if order.shop.owner_telegram_id != callback.from_user.id and callback.from_user.id not in settings.admin_ids:
+            await callback.answer("This is not your order.", show_alert=True)
+            return
+        if order.status != OrderStatus.PROCESSING:
+            await callback.answer("Set the delivery date after payment approval, while the order is processing.", show_alert=True)
+            return
+    await state.update_data(delivery_order_id=order_id)
+    await state.set_state(OrderDeliveryDate.date)
+    await callback.message.answer(f"Delivery date for order #{order_id}? Send DD.MM.YYYY or YYYY-MM-DD. Send /cancel to stop.")
+    await callback.answer()
+
+
+@dp.message(OrderDeliveryDate.date, F.text)
+async def save_order_delivery_date(message: Message, state: FSMContext) -> None:
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Delivery date update cancelled.")
+        return
+    delivery_date = None
+    for pattern in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            delivery_date = datetime.strptime(message.text.strip(), pattern).date()
+            break
+        except ValueError:
+            pass
+    if delivery_date is None or delivery_date < moscow_now().date():
+        await message.answer("Send today or a future date as DD.MM.YYYY or YYYY-MM-DD.")
+        return
+    data = await state.get_data()
+    async with SessionLocal() as session:
+        order = await session.get(Order, data["delivery_order_id"])
+        if order:
+            await session.refresh(order, attribute_names=["shop"])
+        if not order or (order.shop.owner_telegram_id != message.from_user.id and message.from_user.id not in settings.admin_ids):
+            await state.clear()
+            await message.answer("This order is no longer available to you.")
+            return
+        if order.status != OrderStatus.PROCESSING:
+            await state.clear()
+            await message.answer("This order is no longer processing. Its delivery date was not changed.")
+            return
+        order.delivery_date = delivery_date
+        await session.commit()
+        language = await customer_language(session, order.client_telegram_id)
+    await state.clear()
+    await message.answer(f"Order #{order.id}: delivery date saved as {delivery_date:%d.%m.%Y}.")
+    await bot.send_message(
+        order.client_telegram_id,
+        t(language, "status", order_id=order.id, status=status_text(language, order.status))
+        + "\n" + delivery_date_text(order, language),
+    )
+
+
 @dp.callback_query(F.data.startswith("owner:"))
-async def owner_order_action(callback: CallbackQuery) -> None:
+async def owner_order_action(callback: CallbackQuery, state: FSMContext) -> None:
     _, action, order_id_raw = callback.data.split(":")
     order_id = int(order_id_raw)
     async with SessionLocal() as session:
         order = await session.get(Order, order_id)
         await session.refresh(order, attribute_names=["shop"])
         if order.shop.owner_telegram_id != callback.from_user.id:
-            await callback.answer("This is not your order.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "not_your_order"), show_alert=True)
             return
         if action == "processing":
-            order.status = OrderStatus.PROCESSING
+            # Payment approval starts processing; this button confirms its delivery date.
+            await set_order_delivery_date(callback, state)
+            return
         elif action == "delivered":
             order.status = OrderStatus.DELIVERED
             order.delivered_at = datetime.utcnow()
         await session.commit()
         language = await customer_language(session, order.client_telegram_id)
-    await bot.send_message(order.client_telegram_id, t(language, "status", order_id=order.id, status=order.status.value))
+    await bot.send_message(
+        order.client_telegram_id,
+        t(language, "status", order_id=order.id, status=status_text(language, order.status))
+        + "\n" + delivery_date_text(order, language),
+    )
     for admin_id in settings.admin_ids:
         await bot.send_message(
             admin_id,
@@ -1510,7 +1591,7 @@ async def message_client(callback: CallbackQuery, state: FSMContext) -> None:
         order = await session.get(Order, order_id)
         await session.refresh(order, attribute_names=["shop"])
         if order.shop.owner_telegram_id != callback.from_user.id:
-            await callback.answer("This is not your order.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "not_your_order"), show_alert=True)
             return
 
     await state.update_data(order_id=order_id, target="client")
@@ -1526,7 +1607,7 @@ async def message_admin(callback: CallbackQuery, state: FSMContext) -> None:
         order = await session.get(Order, order_id)
         await session.refresh(order, attribute_names=["shop"])
         if order.shop.owner_telegram_id != callback.from_user.id:
-            await callback.answer("This is not your order.", show_alert=True)
+            await callback.answer(await user_text(callback.from_user.id, "not_your_order"), show_alert=True)
             return
 
     await state.update_data(order_id=order_id, target="admin")
@@ -1547,7 +1628,7 @@ async def relay_message(message: Message, state: FSMContext) -> None:
         order = await session.get(Order, order_id)
         if not order:
             await state.clear()
-            await message.answer("Sorry, this order is no longer available.")
+            await message.answer(await user_text(message.from_user.id, "order_unavailable"))
             return
         await session.refresh(order, attribute_names=["shop"])
         thread_message = MessageThread(
@@ -1587,15 +1668,15 @@ async def relay_message(message: Message, state: FSMContext) -> None:
     if care_message:
         await notify_customer_care_agents(care_message, care_agent_ids)
         if care_message.direction == CareMessageDirection.CLIENT_TO_OWNER:
-            await message.answer("Thank you. Your message is now with customer care for review before it is shared with the shop owner.")
+            await message.answer(await user_text(message.from_user.id, "care_pending_owner"))
         else:
-            await message.answer("Your message is now with customer care for review before it is shared with the customer.")
+            await message.answer(await user_text(message.from_user.id, "care_pending_client"))
     elif target_ids:
         for target_id in target_ids:
-            await bot.send_message(target_id, f"Message about order #{order.id}:\n\n{message.text}")
-        await message.answer("Thank you. Your message has been sent.")
+            await bot.send_message(target_id, await user_text(target_id, "order_message", order_id=order.id, message=message.text))
+        await message.answer(await user_text(message.from_user.id, "message_sent"))
     else:
-        await message.answer("Sorry, no recipient is assigned yet. Please try again a little later.")
+        await message.answer(await user_text(message.from_user.id, "no_recipient"))
     await state.clear()
 
 
@@ -1677,6 +1758,17 @@ async def main() -> None:
             BotCommand(command="care", description="Open customer-care panel"),
             BotCommand(command="whoami", description="Show my Telegram ID"),
         ]
+    )
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Открыть Elite Feast"),
+            BotCommand(command="shops", description="Посмотреть доступные магазины"),
+            BotCommand(command="orders", description="Мои заказы"),
+            BotCommand(command="admin", description="Панель администратора"),
+            BotCommand(command="care", description="Служба поддержки"),
+            BotCommand(command="whoami", description="Мой Telegram ID"),
+        ],
+        language_code="ru",
     )
     asyncio.create_task(schedule_loop())
     asyncio.create_task(review_request_loop())

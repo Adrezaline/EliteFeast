@@ -1,5 +1,6 @@
 from typing import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from elitefeast_bot.config import get_settings
@@ -41,6 +42,31 @@ async def init_db() -> None:
                 await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN review_requested_at DATETIME")
         elif conn.dialect.name == "postgresql":
             await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_date DATE")
+            telegram_id_columns = (
+                ("users", "telegram_id"),
+                ("customer_language_preferences", "telegram_id"),
+                ("shops", "owner_telegram_id"),
+                ("orders", "client_telegram_id"),
+                ("message_threads", "sender_telegram_id"),
+                ("customer_care_agents", "telegram_id"),
+                ("customer_care_messages", "sender_telegram_id"),
+                ("customer_care_messages", "recipient_telegram_id"),
+                ("customer_care_messages", "reviewed_by_telegram_id"),
+                ("reviews", "client_telegram_id"),
+            )
+            for table_name, column_name in telegram_id_columns:
+                column_type = await conn.scalar(
+                    text(
+                        "SELECT data_type FROM information_schema.columns "
+                        "WHERE table_schema = current_schema() "
+                        "AND table_name = :table_name AND column_name = :column_name"
+                    ),
+                    {"table_name": table_name, "column_name": column_name},
+                )
+                if column_type == "integer":
+                    await conn.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ALTER COLUMN {column_name} TYPE BIGINT"
+                    )
 
 
 async def session_scope() -> AsyncIterator[AsyncSession]:

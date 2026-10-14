@@ -2,7 +2,7 @@ from datetime import date, datetime
 from enum import Enum as PyEnum
 from typing import List, Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -48,7 +48,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255))
     username: Mapped[Optional[str]] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.CLIENT)
@@ -59,7 +59,7 @@ class CustomerLanguagePreference(Base):
     __tablename__ = "customer_language_preferences"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     language: Mapped[str] = mapped_column(String(8), default="en")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -70,7 +70,7 @@ class Shop(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    owner_telegram_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    owner_telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
     photo_file_id: Mapped[Optional[str]] = mapped_column(String(255))
     is_live: Mapped[bool] = mapped_column(Boolean, default=False)
     live_from: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -105,7 +105,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    client_telegram_id: Mapped[int] = mapped_column(Integer, index=True)
+    client_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"))
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.DRAFT)
     city: Mapped[Optional[str]] = mapped_column(String(255))
@@ -139,7 +139,7 @@ class MessageThread(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
-    sender_telegram_id: Mapped[int] = mapped_column(Integer)
+    sender_telegram_id: Mapped[int] = mapped_column(BigInteger)
     message: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -148,7 +148,7 @@ class CustomerCareAgent(Base):
     __tablename__ = "customer_care_agents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -158,14 +158,14 @@ class CustomerCareMessage(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
-    sender_telegram_id: Mapped[int] = mapped_column(Integer, index=True)
-    recipient_telegram_id: Mapped[int] = mapped_column(Integer, index=True)
+    sender_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    recipient_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     direction: Mapped[CareMessageDirection] = mapped_column(Enum(CareMessageDirection))
     status: Mapped[CareMessageStatus] = mapped_column(
         Enum(CareMessageStatus), default=CareMessageStatus.PENDING, index=True
     )
     message: Mapped[str] = mapped_column(Text)
-    reviewed_by_telegram_id: Mapped[Optional[int]] = mapped_column(Integer)
+    reviewed_by_telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -175,7 +175,7 @@ class Review(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
-    client_telegram_id: Mapped[int] = mapped_column(Integer, index=True)
+    client_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     rating: Mapped[Optional[int]] = mapped_column(Integer)
     comment: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

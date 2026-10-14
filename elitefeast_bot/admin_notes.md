@@ -2,21 +2,7 @@
 
 ## Assigning Shop Owners
 
-After a shop owner sends `/start` to the bot, add their Telegram ID to the relevant shop row in the database:
-
-```sql
-UPDATE shops
-SET owner_telegram_id = 123456789
-WHERE name = 'D Cake House';
-```
-
-For production, this should become an admin-only Telegram command such as:
-
-```text
-/assign_owner "D Cake House" 123456789
-```
-
-The implemented command uses the shop ID:
+Use `/admin_shops` to find each shop's database ID, then assign the owner with:
 
 ```text
 /assign_owner 2 123456789

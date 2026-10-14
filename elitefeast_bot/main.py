@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BotCommand, CallbackQuery, Message
@@ -201,11 +202,16 @@ async def send_cart(message: Message, order: Order, language: str = "en") -> Non
 
 @dp.message(Command("start"))
 async def start(message: Message) -> None:
-    async with SessionLocal() as session:
-        await upsert_user(session, message.from_user)
-        shops = await live_shops(session)
-        is_care_agent = await is_customer_care_agent(session, message.from_user.id)
-        language = await customer_language(session, message.from_user.id)
+    try:
+        async with SessionLocal() as session:
+            await upsert_user(session, message.from_user)
+            shops = await live_shops(session)
+            is_care_agent = await is_customer_care_agent(session, message.from_user.id)
+            language = await customer_language(session, message.from_user.id)
+    except Exception:
+        logging.exception("Failed to handle /start for Telegram user %s", message.from_user.id)
+        await message.answer("Sorry, the shop list is temporarily unavailable. Please try /start again shortly.")
+        return
 
     if message.from_user.id in settings.admin_ids:
         menu = admin_menu_keyboard()
@@ -675,10 +681,17 @@ async def assign_owner(message: Message) -> None:
         await session.commit()
 
     await message.answer(f"{shop.name} is now assigned to Telegram ID {owner_telegram_id}.")
-    await bot.send_message(
-        owner_telegram_id,
-        f"You have been assigned as the shop owner for {shop.name}. Use /owner and /owner_orders.",
-    )
+    try:
+        await bot.send_message(
+            owner_telegram_id,
+            f"You have been assigned as the shop owner for {shop.name}. Use /owner and /owner_orders.",
+        )
+    except TelegramAPIError:
+        # The assignment is committed even when Telegram cannot deliver the DM.
+        await message.answer(
+            "I couldn't message that owner. Ask them to send /start to the bot; "
+            "the shop assignment has been saved."
+        )
 
 
 @dp.message(Command("add_shop"))
